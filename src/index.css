@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #1F4E78;
+  --color-accent: #00A4EF;
+  --color-success: #107C10;
+  --color-warning: #FF8C00;
+  --color-app-bg: #F8F9FA;
+  --color-card: #FFFFFF;
+  --color-text-main: #323130;
+  --color-text-sub: #605E5C;
+  --font-sans: "Microsoft YaHei", "PingFang SC", sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-app-bg);
+  color: var(--color-text-main);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* Custom Scrollbar for Windows feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Form elements focus */
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+/* Base typography classes */
+.text-title {
+  font-size: 18px;
+  font-weight: bold;
+}
+.text-subtitle {
+  font-size: 14px;
+  font-weight: bold;
+}
+.text-body {
+  font-size: 13px;
+  font-weight: normal;
+}
+.text-subtext {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--color-text-sub);
+}
+.text-btn {
+  font-size: 13px;
+  font-weight: 600;
+}
