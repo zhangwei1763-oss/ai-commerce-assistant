@@ -8,3 +8,12 @@ opencv-python-headless==4.10.0.84
 python-dotenv==1.0.1
 python-multipart==0.0.20
 aiofiles==24.1.0
+
+# 认证相关
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+cryptography==44.0.0
+python-dateutil==2.9.0
+
+# 短信服务（可选，根据需要选择）
+aliyun-dysms-python3==2.2.1

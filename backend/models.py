@@ -1,13 +1,66 @@
 """
 数据模型定义
-包含四张核心表：产品、脚本、视频、爆款分析
+包含用户表、产品、脚本、视频、爆款分析等核心表
 """
 
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, ForeignKey
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
+
+
+class User(Base):
+    """用户表"""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)                    # user_001
+    email = Column(String, unique=True, nullable=False, index=True)
+    phone = Column(String, unique=True, nullable=True, index=True)
+    password_hash = Column(String, nullable=False)           # bcrypt 加密
+    username = Column(String)                                # 可选昵称
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)                # 管理员标识
+    last_login = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # 关系
+    api_keys = relationship("UserApiKey", back_populates="user", cascade="all, delete-orphan")
+    products = relationship("Product", back_populates="user", cascade="all, delete-orphan")
+    scripts = relationship("Script", back_populates="user", cascade="all, delete-orphan")
+    videos = relationship("Video", back_populates="user", cascade="all, delete-orphan")
+    viral_analyses = relationship("ViralAnalysis", back_populates="user", cascade="all, delete-orphan")
+
+
+class UserApiKey(Base):
+    """用户 API Key 表（加密存储）"""
+    __tablename__ = "user_api_keys"
+
+    id = Column(String, primary_key=True)                    # key_001
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False)                # GEMINI / DOUBAO / SEEDANCE
+    api_key = Column(Text, nullable=False)                   # AES 加密存储
+    api_endpoint = Column(String)                            # 可选自定义端点
+    model_name = Column(String)                              # 可选模型名
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # 关系
+    user = relationship("User", back_populates="api_keys")
+
+
+class SmsVerification(Base):
+    """短信验证码表"""
+    __tablename__ = "sms_verifications"
+
+    id = Column(String, primary_key=True)                    # sms_001
+    phone = Column(String, nullable=False, index=True)
+    code = Column(String, nullable=False)                    # 6 位验证码
+    verified = Column(Boolean, default=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Product(Base):
@@ -15,14 +68,18 @@ class Product(Base):
     __tablename__ = "products"
 
     id = Column(String, primary_key=True)                    # prod_20250225_001
-    product_name = Column(String, nullable=False)            # 产品名称
-    core_selling_points = Column(Text)                       # 核心卖点
-    main_pain_points = Column(Text)                          # 主要痛点
-    price_advantage = Column(String)                         # 价格优势
-    target_audience = Column(String)                         # 目标人群
-    product_images = Column(Text)                            # 产品图片（JSON字符串）
-    confirmed = Column(Boolean, default=False)               # 是否已由AI确认
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    product_name = Column(String, nullable=False)
+    core_selling_points = Column(Text)
+    main_pain_points = Column(Text)
+    price_advantage = Column(String)
+    target_audience = Column(String)
+    product_images = Column(Text)
+    confirmed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # 关系
+    user = relationship("User", back_populates="products")
 
 
 class Script(Base):
@@ -30,18 +87,22 @@ class Script(Base):
     __tablename__ = "scripts"
 
     id = Column(String, primary_key=True)                    # script_001
-    product_id = Column(String, nullable=False)              # 关联产品ID
-    script_type = Column(String, default="normal")           # normal / matrix / viral
-    hook_type = Column(String)                               # 钩子类型
-    audience = Column(String)                                # 目标人群
-    hook_text = Column(Text)                                 # 钩子文案
-    product_text = Column(Text)                              # 产品文案
-    cta_text = Column(Text)                                  # 逼单文案
-    visual_prompts = Column(Text)                            # 画面提示词（JSON字符串）
-    total_word_count = Column(Integer)                       # 口播总字数
-    styles = Column(String)                                  # 文案风格（逗号分隔）
-    duration = Column(Integer)                               # 脚本时长（秒）
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    product_id = Column(String, nullable=False)
+    script_type = Column(String, default="normal")
+    hook_type = Column(String)
+    audience = Column(String)
+    hook_text = Column(Text)
+    product_text = Column(Text)
+    cta_text = Column(Text)
+    visual_prompts = Column(Text)
+    total_word_count = Column(Integer)
+    styles = Column(String)
+    duration = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # 关系
+    user = relationship("User", back_populates="scripts")
 
 
 class Video(Base):
@@ -49,19 +110,23 @@ class Video(Base):
     __tablename__ = "videos"
 
     id = Column(String, primary_key=True)                    # video_001
-    script_id = Column(String)                               # 关联脚本ID
-    product_id = Column(String)                              # 关联产品ID
-    seedance_task_id = Column(String)                        # Seedance任务ID
-    filename = Column(String)                                # 文件名
-    local_path = Column(String)                              # 本地存储路径
-    thumbnail = Column(String)                               # 缩略图路径
-    duration = Column(Integer)                               # 视频时长（秒）
-    resolution = Column(String)                              # 分辨率
-    file_size = Column(String)                               # 文件大小
-    visual_style = Column(String)                            # 视觉风格
-    status = Column(String, default="pending")               # pending/processing/completed/failed
-    progress = Column(Integer, default=0)                    # 生成进度（0-100）
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    script_id = Column(String)
+    product_id = Column(String)
+    seedance_task_id = Column(String)
+    filename = Column(String)
+    local_path = Column(String)
+    thumbnail = Column(String)
+    duration = Column(Integer)
+    resolution = Column(String)
+    file_size = Column(String)
+    visual_style = Column(String)
+    status = Column(String, default="pending")
+    progress = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # 关系
+    user = relationship("User", back_populates="videos")
 
 
 class ViralAnalysis(Base):
@@ -69,9 +134,13 @@ class ViralAnalysis(Base):
     __tablename__ = "viral_analysis"
 
     id = Column(String, primary_key=True)                    # analysis_001
-    product_id = Column(String, nullable=False)              # 关联产品ID
-    video_url = Column(String)                               # 爆款视频链接
-    hook_analysis = Column(Text)                             # 钩子分析（JSON）
-    visual_analysis = Column(Text)                           # 视觉分析（JSON）
-    conversion_logic = Column(Text)                          # 转化逻辑（JSON）
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    product_id = Column(String, nullable=False)
+    video_url = Column(String)
+    hook_analysis = Column(Text)
+    visual_analysis = Column(Text)
+    conversion_logic = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # 关系
+    user = relationship("User", back_populates="viral_analyses")

@@ -43,6 +43,16 @@ from services.analyze_service import router as analyze_router
 from services.test_service    import router as test_router
 from services.video_generate_service import router as video_generate_router
 
+# 认证和用户路由
+from auth.router import router as auth_router
+from user_router import router as user_router
+
+# 认证相关
+app.include_router(auth_router)
+
+# 用户管理
+app.include_router(user_router)
+
 # API 测试接口
 app.include_router(test_router, prefix="/api", tags=["API测试"])
 

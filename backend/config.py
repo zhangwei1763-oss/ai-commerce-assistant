@@ -4,7 +4,7 @@
 """
 
 import os
-import json
+import secrets
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -36,6 +36,21 @@ class Settings(BaseSettings):
         "http://localhost:1420",
         "http://localhost:3000",
     ]
+
+    # ---- JWT 认证配置 ----
+    SECRET_KEY: str = secrets.token_urlsafe(32)
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 天
+
+    # ---- API Key 加密配置 ----
+    # 生产环境应从环境变量读取
+    API_KEY_ENCRYPTION_KEY: str = secrets.token_urlsafe(32)
+
+    # ---- 短信服务配置（阿里云） ----
+    ALIYUN_ACCESS_KEY_ID: str = ""
+    ALIYUN_ACCESS_KEY_SECRET: str = ""
+    ALIYUN_SMS_SIGN_NAME: str = ""
+    ALIYUN_SMS_TEMPLATE_CODE: str = ""
 
     class Config:
         env_file = ".env"
