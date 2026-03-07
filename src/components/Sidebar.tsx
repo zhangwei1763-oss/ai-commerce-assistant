@@ -1,5 +1,6 @@
 import React from 'react';
-import { Settings, Info, Check, Video, FileText } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Settings, Info, Check, Video, FileText, User, LogOut } from 'lucide-react';
 
 const steps = [
   { id: 1, title: '构建AI大脑', desc: '定身份+喂产品' },
@@ -8,7 +9,15 @@ const steps = [
   { id: 4, title: '数据回流进化', desc: '爆款裂变闭环' },
 ];
 
-export default function Sidebar({ currentStep, setCurrentStep, completedSteps, onOpenSettings, onOpenPromptTemplates }: any) {
+interface SidebarProps {
+  currentStep: number;
+  setCurrentStep: (step: number) => void;
+  completedSteps: number[];
+  onOpenSettings: () => void;
+  onOpenPromptTemplates: () => void;
+}
+
+export default function Sidebar({ currentStep, setCurrentStep, completedSteps, onOpenSettings, onOpenPromptTemplates }: SidebarProps) {
   return (
     <div className="w-[240px] bg-white border-r border-gray-200 flex flex-col h-full shadow-sm z-10">
       <div className="h-16 flex items-center px-4 border-b border-gray-100">
@@ -17,14 +26,14 @@ export default function Sidebar({ currentStep, setCurrentStep, completedSteps, o
         </div>
         <span className="text-title text-primary">AI带货助手</span>
       </div>
-      
+
       <div className="flex-1 py-4 overflow-y-auto">
         {steps.map((step) => {
           const isSelected = currentStep === step.id;
           const isCompleted = completedSteps.includes(step.id);
-          
+
           return (
-            <div 
+            <div
               key={step.id}
               onClick={() => setCurrentStep(step.id)}
               className={`relative flex items-center px-4 py-3 cursor-pointer transition-colors ${
@@ -34,17 +43,17 @@ export default function Sidebar({ currentStep, setCurrentStep, completedSteps, o
               {isSelected && (
                 <div className="absolute left-0 top-0 bottom-0 w-1 bg-accent"></div>
               )}
-              
+
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs mr-3 flex-shrink-0 ${
-                isCompleted 
-                  ? 'bg-success text-white' 
-                  : isSelected 
-                    ? 'bg-accent text-white' 
+                isCompleted
+                  ? 'bg-success text-white'
+                  : isSelected
+                    ? 'bg-accent text-white'
                     : 'bg-gray-200 text-gray-600'
               }`}>
                 {isCompleted ? <Check className="w-4 h-4" /> : step.id}
               </div>
-              
+
               <div className="flex flex-col">
                 <span className={`text-body font-semibold ${isSelected ? 'text-accent' : 'text-text-main'}`}>
                   {step.title}
@@ -57,8 +66,15 @@ export default function Sidebar({ currentStep, setCurrentStep, completedSteps, o
           );
         })}
       </div>
-      
+
       <div className="border-t border-gray-100 p-2">
+        <Link
+          to="/dashboard"
+          className="w-full flex items-center px-4 py-2 text-text-sub hover:bg-gray-50 hover:text-text-main rounded transition-colors"
+        >
+          <User className="w-4 h-4 mr-2" />
+          <span className="text-body">用户后台</span>
+        </Link>
         <button
           onClick={onOpenPromptTemplates}
           className="w-full flex items-center px-4 py-2 text-text-sub hover:bg-gray-50 hover:text-text-main rounded transition-colors"
