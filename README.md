@@ -187,6 +187,36 @@ Vercel 环境变量至少设置：
 VITE_API_URL=https://your-backend-domain.com
 ```
 
+### 后端先部署到 Render
+
+仓库已经补好了：
+
+- [backend/Dockerfile](/Users/liuyanbo/Downloads/报告/ai带货助手/backend/Dockerfile)
+- [render.yaml](/Users/liuyanbo/Downloads/报告/ai带货助手/render.yaml)
+
+推荐直接用 Render Blueprint / Web Service 导入这个仓库。
+
+最短路径：
+
+1. 打开 Render 控制台，点击 `New +` -> `Blueprint`
+2. 连接 GitHub 仓库 `zhangwei1763-oss/ai-commerce-assistant`
+3. Render 会识别根目录的 `render.yaml`
+4. 在创建页面填写所有 `sync: false` 的环境变量
+5. 创建后等待后端部署完成，拿到类似：
+   `https://ai-commerce-backend.onrender.com`
+6. 回到 Vercel，把前端环境变量设置为：
+   `VITE_API_URL=https://ai-commerce-backend.onrender.com`
+7. 重新部署前端
+
+如果你不用 Blueprint，也可以在 Render 手动创建 `Web Service`：
+
+- Runtime: `Docker`
+- Dockerfile Path: `./backend/Dockerfile`
+- Docker Context: `./backend`
+- Health Check Path: `/health`
+- Region: `Singapore`
+- Port: `10000`
+
 ### 第 2 阶段：数据库切到 Supabase
 
 后端已经支持 `postgresql+psycopg://...` 连接串，依赖也已补上 `psycopg[binary]`。

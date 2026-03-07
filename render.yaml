@@ -1,0 +1,61 @@
+services:
+  - type: web
+    runtime: docker
+    name: ai-commerce-backend
+    plan: starter
+    region: singapore
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: API_KEY_ENCRYPTION_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: "AI带货助手"
+      - key: SMTP_USE_TLS
+        value: "false"
+      - key: SMTP_USE_SSL
+        value: "true"
+      - key: ARK_MODEL
+        value: ""
+      - key: ARK_TEXT_MODEL
+        value: "ep-20260225204603-zcqr4"
+      - key: ARK_VIDEO_MODEL
+        value: "ep-20260225204954-4sqgz"
+      - key: ARK_TEXT_TEST_ENDPOINT
+        value: "https://ark.cn-beijing.volces.com/api/v3/responses"
+      - key: ARK_VIDEO_TEST_ENDPOINT
+        value: "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks"
+      - key: SEEDANCE_API_KEY
+        value: ""
+      - key: SEEDANCE_API_URL
+        value: "https://api.seedance.com/v1"
+      - key: STORAGE_BACKEND
+        value: "supabase"
+      - key: STORAGE_PUBLIC_BASE_URL
+        value: ""
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: "ai-douyin-helper"
