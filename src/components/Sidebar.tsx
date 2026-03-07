@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Settings, Info, Check, Video, FileText, User, LogOut } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { Settings, Info, Check, Video, FileText, User, LogOut, Shield } from 'lucide-react';
 
 const steps = [
   { id: 1, title: '构建AI大脑', desc: '定身份+喂产品' },
@@ -18,6 +19,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ currentStep, setCurrentStep, completedSteps, onOpenSettings, onOpenPromptTemplates }: SidebarProps) {
+  const { user } = useAuth();
   return (
     <div className="w-[240px] bg-white border-r border-gray-200 flex flex-col h-full shadow-sm z-10">
       <div className="h-16 flex items-center px-4 border-b border-gray-100">
@@ -75,6 +77,15 @@ export default function Sidebar({ currentStep, setCurrentStep, completedSteps, o
           <User className="w-4 h-4 mr-2" />
           <span className="text-body">用户后台</span>
         </Link>
+        {user?.is_admin && (
+          <Link
+            to="/admin"
+            className="w-full flex items-center px-4 py-2 text-text-sub hover:bg-gray-50 hover:text-text-main rounded transition-colors"
+          >
+            <Shield className="w-4 h-4 mr-2" />
+            <span className="text-body">管理员后台</span>
+          </Link>
+        )}
         <button
           onClick={onOpenPromptTemplates}
           className="w-full flex items-center px-4 py-2 text-text-sub hover:bg-gray-50 hover:text-text-main rounded transition-colors"
