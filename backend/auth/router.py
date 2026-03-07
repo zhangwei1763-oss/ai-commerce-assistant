@@ -6,7 +6,6 @@
 from datetime import timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -20,6 +19,7 @@ from auth.security import (
 )
 from auth.dependencies import get_current_user
 from config import settings
+from services.email_service import EmailService
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -28,8 +28,14 @@ router = APIRouter(prefix="/api/auth", tags=["认证"])
 class UserRegisterRequest(BaseModel):
     """用户注册请求"""
     email: EmailStr
+    code: str = Field(..., pattern=r'^\d{6}$')
     password: str = Field(..., min_length=6, max_length=50)
     username: Optional[str] = None
+
+
+class EmailCodeRequest(BaseModel):
+    """邮箱验证码发送请求"""
+    email: EmailStr
 
 
 class UserLoginRequest(BaseModel):
@@ -57,8 +63,44 @@ class TokenResponse(BaseModel):
     user: UserResponse
 
 
+class RegisterResponse(BaseModel):
+    """注册成功响应"""
+    ok: bool = True
+    message: str = "注册成功，请前往登录"
+
+
 # ---- API 端点 ----
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/send-email-code")
+async def send_email_code(
+    request: EmailCodeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    发送邮箱验证码
+    """
+    existing_user = db.query(User).filter(User.email == request.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该邮箱已被注册"
+        )
+
+    code = await EmailService.send_verification_code(db, request.email)
+    response = {
+        "ok": True,
+        "message": "验证码已发送",
+    }
+    if not all([
+        settings.SMTP_HOST,
+        settings.SMTP_USERNAME,
+        settings.SMTP_PASSWORD,
+        settings.SMTP_FROM_EMAIL,
+    ]):
+        response["dev_code"] = code
+    return response
+
+
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register_email(
     request: UserRegisterRequest,
     db: Session = Depends(get_db)
@@ -67,6 +109,7 @@ async def register_email(
     邮箱注册
 
     - **email**: 邮箱地址（唯一）
+    - **code**: 邮箱验证码
     - **password**: 密码（至少 6 位）
     - **username**: 可选昵称
     """
@@ -76,6 +119,12 @@ async def register_email(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="该邮箱已被注册"
+        )
+
+    if not EmailService.verify_code(db, request.email, request.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="邮箱验证码错误或已过期"
         )
 
     # 创建新用户
@@ -92,15 +141,9 @@ async def register_email(
     db.commit()
     db.refresh(user)
 
-    # 生成 access token
-    access_token = create_access_token(
-        data={"sub": user.id},
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
-
-    return TokenResponse(
-        access_token=access_token,
-        user=UserResponse.model_validate(user)
+    return RegisterResponse(
+        ok=True,
+        message="注册成功，请前往登录"
     )
 
 

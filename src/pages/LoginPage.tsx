@@ -3,16 +3,23 @@
  */
 
 import React, { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const { login } = useAuth();
   const redirectTo = searchParams.get('redirect') || '/';
+  const successMessage = typeof location.state === 'object' && location.state && 'message' in location.state
+    ? String((location.state as { message?: string }).message || '')
+    : '';
+  const prefillEmail = typeof location.state === 'object' && location.state && 'email' in location.state
+    ? String((location.state as { email?: string }).email || '')
+    : '';
 
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(prefillEmail);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -45,6 +52,12 @@ export default function LoginPage() {
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
               {error}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm">
+              {successMessage}
             </div>
           )}
 

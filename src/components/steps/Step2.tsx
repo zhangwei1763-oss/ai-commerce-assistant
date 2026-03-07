@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Copy, CheckSquare, Loader2, FileText } from 'lucide-react';
 import type { GeneratedScript, Step1FormData } from '../../App';
 import PromptTemplateSelector from '../PromptTemplateSelector';
+import { buildApiUrl } from '../../services/api';
 
 type Step2Props = {
   onNext: () => void;
@@ -85,7 +86,7 @@ export default function Step2({ onNext, step1Data, textApiKey, scripts, setScrip
       const timeout = setTimeout(() => controller.abort(), 130000);
       let response: Response;
       try {
-        response = await fetch('/api/generate-scripts', {
+        response = await fetch(buildApiUrl('/api/generate-scripts'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

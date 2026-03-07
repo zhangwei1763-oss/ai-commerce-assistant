@@ -8,6 +8,8 @@ import Step3 from './components/steps/Step3';
 import Step5 from './components/steps/Step5';
 import SettingsModal from './components/SettingsModal';
 import PromptTemplateModal from './components/PromptTemplateModal';
+import { useAuth } from './contexts/AuthContext';
+import { userApi, type StoredApiKey } from './services/api';
 
 export type Step1FormData = {
   productName: string;
@@ -64,29 +66,14 @@ export type Step4FlowState = {
   deriveDurationSeconds?: number;
 };
 
-function safeGetStorage(key: string) {
-  try {
-    return window.localStorage.getItem(key) || '';
-  } catch {
-    return '';
-  }
-}
-
-function safeSetStorage(key: string, value: string) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // Ignore storage errors from restricted environments.
-  }
-}
-
 export default function App() {
+  const { user } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPromptTemplatesOpen, setIsPromptTemplatesOpen] = useState(false);
-  const [textApiKey, setTextApiKey] = useState('');
-  const [videoApiKey, setVideoApiKey] = useState('');
+  const [storedTextApiKey, setStoredTextApiKey] = useState<StoredApiKey | null>(null);
+  const [storedVideoApiKey, setStoredVideoApiKey] = useState<StoredApiKey | null>(null);
   const [step1Data, setStep1Data] = useState<Step1FormData>({
     productName: '',
     coreSellingPoints: '',
@@ -104,20 +91,85 @@ export default function App() {
     productImages: [],
   });
 
-  useEffect(() => {
-    const savedTextKey = safeGetStorage('ark_text_api_key');
-    const savedVideoKey = safeGetStorage('ark_video_api_key');
-    setTextApiKey(savedTextKey);
-    setVideoApiKey(savedVideoKey);
-  }, []);
+  const textApiKey = storedTextApiKey?.api_key || '';
+  const videoApiKey = storedVideoApiKey?.api_key || '';
 
   useEffect(() => {
-    safeSetStorage('ark_text_api_key', textApiKey);
-  }, [textApiKey]);
+    const loadUserApiKeys = async () => {
+      const response = await userApi.listApiKeys();
+      if (!response.ok || !Array.isArray(response.data)) {
+        setStoredTextApiKey(null);
+        setStoredVideoApiKey(null);
+        return;
+      }
 
-  useEffect(() => {
-    safeSetStorage('ark_video_api_key', videoApiKey);
-  }, [videoApiKey]);
+      const keys = response.data as StoredApiKey[];
+      const nextTextKey = keys.find((item) => item.provider === 'DOUBAO')
+        || keys.find((item) => item.provider === 'GEMINI')
+        || null;
+      const nextVideoKey = keys.find((item) => item.provider === 'SEEDANCE') || null;
+
+      setStoredTextApiKey(nextTextKey);
+      setStoredVideoApiKey(nextVideoKey);
+    };
+
+    if (user?.id) {
+      void loadUserApiKeys();
+    }
+  }, [user?.id]);
+
+  const handleSaveApiKeys = async (nextKeys: {
+    textApiKey: string;
+    videoApiKey: string;
+  }) => {
+    const normalizedTextKey = nextKeys.textApiKey.trim();
+    const normalizedVideoKey = nextKeys.videoApiKey.trim();
+
+    if (normalizedTextKey) {
+      const response = await userApi.createApiKey({
+        provider: 'DOUBAO',
+        api_key: normalizedTextKey,
+      });
+      if (!response.ok) {
+        throw new Error(response.message || '文案 API Key 保存失败');
+      }
+      if (storedTextApiKey?.id && storedTextApiKey.provider !== 'DOUBAO') {
+        const cleanupResponse = await userApi.deleteApiKey(storedTextApiKey.id);
+        if (!cleanupResponse.ok) {
+          throw new Error(cleanupResponse.message || '旧文案 API Key 清理失败');
+        }
+      }
+    } else if (storedTextApiKey?.id) {
+      const response = await userApi.deleteApiKey(storedTextApiKey.id);
+      if (!response.ok) {
+        throw new Error(response.message || '文案 API Key 删除失败');
+      }
+    }
+
+    if (normalizedVideoKey) {
+      const response = await userApi.createApiKey({
+        provider: 'SEEDANCE',
+        api_key: normalizedVideoKey,
+      });
+      if (!response.ok) {
+        throw new Error(response.message || '视频 API Key 保存失败');
+      }
+    } else if (storedVideoApiKey?.id) {
+      const response = await userApi.deleteApiKey(storedVideoApiKey.id);
+      if (!response.ok) {
+        throw new Error(response.message || '视频 API Key 删除失败');
+      }
+    }
+
+    const latestKeys = await userApi.listApiKeys();
+    if (!latestKeys.ok || !Array.isArray(latestKeys.data)) {
+      throw new Error(latestKeys.message || '重新加载 API Key 失败');
+    }
+
+    const keys = latestKeys.data as StoredApiKey[];
+    setStoredTextApiKey(keys.find((item) => item.provider === 'DOUBAO') || null);
+    setStoredVideoApiKey(keys.find((item) => item.provider === 'SEEDANCE') || null);
+  };
 
   const handleNext = () => {
     if (!completedSteps.includes(currentStep)) {
@@ -213,9 +265,8 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         textApiKey={textApiKey}
-        setTextApiKey={setTextApiKey}
         videoApiKey={videoApiKey}
-        setVideoApiKey={setVideoApiKey}
+        onSave={handleSaveApiKeys}
       />
       <PromptTemplateModal
         isOpen={isPromptTemplatesOpen}

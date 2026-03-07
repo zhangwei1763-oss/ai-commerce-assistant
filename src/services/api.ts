@@ -3,7 +3,13 @@
  * 统一处理认证、错误、token 刷新等
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+
+export function buildApiUrl(endpoint: string) {
+  if (/^https?:\/\//.test(endpoint)) return endpoint;
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  return `${API_BASE_URL}${normalizedEndpoint}`;
+}
 
 // 内部 token 存储
 let _accessToken: string | null = null;
@@ -34,11 +40,48 @@ interface ApiResponse<T = unknown> {
   detail?: string;
 }
 
+export interface StoredApiKey {
+  id: string;
+  provider: string;
+  api_key: string;
+  api_endpoint: string;
+  model_name: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptTemplateRecord {
+  id: string;
+  name: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminUserRecord {
+  id: string;
+  email: string;
+  username?: string;
+  phone?: string;
+  is_active: boolean;
+  is_admin: boolean;
+  created_at: string;
+  last_login?: string;
+}
+
+export interface AdminUserStats {
+  total_users: number;
+  active_users: number;
+  admin_users: number;
+  new_users_today: number;
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = buildApiUrl(endpoint);
   const token = getAccessToken();
 
   const headers: HeadersInit = {
@@ -79,10 +122,17 @@ async function request<T>(
 
 // 认证 API
 export const authApi = {
-  register: async (email: string, password: string, username?: string) => {
+  sendEmailCode: async (email: string) => {
+    return request('/api/auth/send-email-code', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  register: async (email: string, code: string, password: string, username?: string) => {
     return request('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ email, password, username }),
+      body: JSON.stringify({ email, code, password, username }),
     });
   },
 
@@ -126,6 +176,77 @@ export const userApi = {
 
   deleteApiKey: async (keyId: string) => {
     return request(`/api/user/apikeys/${keyId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  listPromptTemplates: async () => {
+    return request('/api/user/prompt-templates');
+  },
+
+  createPromptTemplate: async (data: {
+    name: string;
+    content: string;
+  }) => {
+    return request('/api/user/prompt-templates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updatePromptTemplate: async (templateId: string, data: {
+    name: string;
+    content: string;
+  }) => {
+    return request(`/api/user/prompt-templates/${templateId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deletePromptTemplate: async (templateId: string) => {
+    return request(`/api/user/prompt-templates/${templateId}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+export const adminApi = {
+  listUsers: async (params?: {
+    limit?: number;
+    is_active?: boolean;
+    search?: string;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (typeof params?.limit === 'number') {
+      searchParams.set('limit', String(params.limit));
+    }
+    if (typeof params?.is_active === 'boolean') {
+      searchParams.set('is_active', String(params.is_active));
+    }
+    if (params?.search?.trim()) {
+      searchParams.set('search', params.search.trim());
+    }
+    const query = searchParams.toString();
+    return request(`/api/admin/users${query ? `?${query}` : ''}`);
+  },
+
+  getStats: async () => {
+    return request('/api/admin/stats');
+  },
+
+  updateUser: async (userId: string, data: {
+    is_active?: boolean;
+    is_admin?: boolean;
+  }) => {
+    return request(`/api/admin/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteUser: async (userId: string) => {
+    return request(`/api/admin/users/${userId}`, {
       method: 'DELETE',
     });
   },

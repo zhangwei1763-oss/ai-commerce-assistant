@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Info, Check, Video, FileText, User, LogOut, Shield } from 'lucide-react';
+import { Settings, Info, Check, Video, FileText, Shield } from 'lucide-react';
 
 const steps = [
   { id: 1, title: '构建AI大脑', desc: '定身份+喂产品' },
@@ -70,13 +70,6 @@ export default function Sidebar({ currentStep, setCurrentStep, completedSteps, o
       </div>
 
       <div className="border-t border-gray-100 p-2">
-        <Link
-          to="/dashboard"
-          className="w-full flex items-center px-4 py-2 text-text-sub hover:bg-gray-50 hover:text-text-main rounded transition-colors"
-        >
-          <User className="w-4 h-4 mr-2" />
-          <span className="text-body">用户后台</span>
-        </Link>
         {user?.is_admin && (
           <Link
             to="/admin"

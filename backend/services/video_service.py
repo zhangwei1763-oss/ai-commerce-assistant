@@ -17,6 +17,7 @@ from api.seedance import seedance_client
 from config import settings
 from utils.file_handler import generate_date_path, get_file_size_str
 from utils.image_handler import generate_thumbnail
+from services.storage_service import storage_service
 
 router = APIRouter()
 
@@ -128,8 +129,14 @@ async def get_video_status(task_id: str, db: Session = Depends(get_db)):
             local_path = os.path.join(save_dir, video.filename)
 
             downloaded_path = await seedance_client.download_video(video_url, local_path)
-            video.local_path = downloaded_path
             video.file_size = get_file_size_str(downloaded_path)
+            stored_video = storage_service.store_file(
+                category="videos",
+                local_path=downloaded_path,
+                filename=video.filename or os.path.basename(downloaded_path),
+                content_type="video/mp4",
+            )
+            video.local_path = stored_video.reference
 
             # 提取缩略图
             thumb_path = generate_thumbnail(downloaded_path)

@@ -9,6 +9,7 @@ import json
 import random
 import subprocess
 from typing import List, Dict, Optional
+from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from database import get_db
 from models import Video
 from config import settings
 from utils.file_handler import generate_date_path, calculate_md5, get_file_size_str
+from services.storage_service import storage_service
 
 router = APIRouter()
 
@@ -150,11 +152,20 @@ async def process_videos(request: VideoProcessRequest, db: Session = Depends(get
 
     for video_id in request.video_ids:
         video = db.query(Video).filter(Video.id == video_id).first()
-        if not video or not video.local_path or not os.path.exists(video.local_path):
+        if not video or not video.local_path:
             results.append({"video_id": video_id, "success": False, "error": "源视频文件不存在"})
             continue
 
-        current_input = video.local_path
+        try:
+            source_path = storage_service.download_to_local(
+                video.local_path,
+                preferred_name=os.path.basename(urlparse(video.local_path).path or video.filename or f"{video.id}.mp4"),
+            )
+        except Exception:
+            results.append({"video_id": video_id, "success": False, "error": "源视频文件不存在"})
+            continue
+
+        current_input = source_path
         tmp_files = []
 
         try:
@@ -197,19 +208,25 @@ async def process_videos(request: VideoProcessRequest, db: Session = Depends(get
                         current_input = tmp
 
             # 最终输出
-            basename = os.path.splitext(os.path.basename(video.local_path))[0]
+            basename = os.path.splitext(os.path.basename(source_path))[0]
             final_path = os.path.join(output_dir, f"{basename}_dedup.mp4")
             os.rename(current_input, final_path)
             tmp_files = [f for f in tmp_files if f != current_input]
 
             # 计算MD5验证去重
-            original_md5 = calculate_md5(video.local_path)
+            original_md5 = calculate_md5(source_path)
             new_md5 = calculate_md5(final_path)
+            stored_output = storage_service.store_file(
+                category="processed",
+                local_path=final_path,
+                filename=f"{basename}_dedup.mp4",
+                content_type="video/mp4",
+            )
             
             results.append({
                 "video_id": video_id,
                 "success": True,
-                "output_path": final_path,
+                "output_path": stored_output.reference,
                 "file_size": get_file_size_str(final_path),
                 "md5_changed": original_md5 != new_md5
             })
@@ -251,13 +268,22 @@ async def export_jianying(request: ExportJianyingRequest, db: Session = Depends(
 
     for v in videos:
         duration_us = (v.duration or 15) * 1_000_000
+        clip_path = v.local_path or ""
+        if clip_path:
+            try:
+                clip_path = storage_service.download_to_local(
+                    clip_path,
+                    preferred_name=os.path.basename(urlparse(clip_path).path or f"{v.id}.mp4"),
+                )
+            except Exception:
+                clip_path = ""
         segments_video.append({
             "id": uuid.uuid4().hex,
             "type": "video",
             "source_timerange": {"start": 0, "duration": duration_us},
             "target_timerange": {"start": timeline_start, "duration": duration_us},
             "material_id": v.id,
-            "path": v.local_path or "",
+            "path": clip_path,
         })
         # 字幕轨占位
         segments_text.append({
@@ -287,10 +313,16 @@ async def export_jianying(request: ExportJianyingRequest, db: Session = Depends(
 
     with open(draft_path, "w", encoding="utf-8") as f:
         json.dump(draft, f, ensure_ascii=False, indent=2)
+    stored_draft = storage_service.store_file(
+        category="exports/jianying",
+        local_path=draft_path,
+        filename=f"{safe_name}.draft",
+        content_type="application/json",
+    )
 
     return {
         "success": True,
-        "draft_file": draft_path,
+        "draft_file": stored_draft.reference,
         "video_count": len(videos),
         "message": "剪映草稿已生成，可直接用剪映打开编辑"
     }

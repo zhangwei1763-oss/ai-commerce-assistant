@@ -6,6 +6,7 @@ import type {
   Step4FlowState,
   UploadedReferenceImage,
 } from '../../App';
+import { buildApiUrl } from '../../services/api';
 
 type Step5Props = {
   onNext: () => void;
@@ -101,7 +102,7 @@ export default function Step5({
     setIsAnalyzing(true);
     setErrorMessage('');
     try {
-      const response = await fetch('/api/analyze-viral-video', {
+      const response = await fetch(buildApiUrl('/api/analyze-viral-video'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -146,7 +147,7 @@ export default function Step5({
     setIsGenerating(true);
     setErrorMessage('');
     try {
-      const response = await fetch('/api/derive-viral-scripts', {
+      const response = await fetch(buildApiUrl('/api/derive-viral-scripts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

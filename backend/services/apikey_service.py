@@ -4,11 +4,14 @@ API Key 服务模块
 """
 
 from typing import Optional, List
+import logging
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 
 from models import User, UserApiKey
 from auth.security import encrypt_api_key, decrypt_api_key, generate_api_key_id
+
+logger = logging.getLogger(__name__)
 
 
 class ApiKeyService:
@@ -90,12 +93,26 @@ class ApiKeyService:
             "id": api_key_obj.id,
             "provider": api_key_obj.provider,
             "api_key": decrypt_api_key(api_key_obj.api_key),
-            "api_endpoint": api_key_obj.api_endpoint,
-            "model_name": api_key_obj.model_name,
+            "api_endpoint": api_key_obj.api_endpoint or "",
+            "model_name": api_key_obj.model_name or "",
             "is_active": api_key_obj.is_active,
             "created_at": api_key_obj.created_at.isoformat(),
             "updated_at": api_key_obj.updated_at.isoformat()
         }
+
+    @staticmethod
+    def try_decrypt_api_key_obj(api_key_obj: UserApiKey) -> Optional[dict]:
+        """尝试解密 API Key 对象，失败时跳过旧坏数据"""
+        try:
+            return ApiKeyService.decrypt_api_key_obj(api_key_obj)
+        except Exception as exc:
+            logger.warning(
+                "Failed to decrypt api key %s for user %s: %s",
+                api_key_obj.id,
+                api_key_obj.user_id,
+                exc,
+            )
+            return None
 
     @staticmethod
     def delete_api_key(db: Session, key_id: str, user_id: str) -> bool:

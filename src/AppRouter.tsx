@@ -11,7 +11,6 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 // 认证页面
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 
 // 主应用
@@ -44,8 +43,8 @@ function AppRouterContent() {
       <Route
         path="/dashboard"
         element={
-          <ProtectedRoute>
-            <UserDashboard />
+          <ProtectedRoute requireAdmin={true}>
+            <Navigate to="/admin" replace />
           </ProtectedRoute>
         }
       />

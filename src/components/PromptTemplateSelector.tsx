@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, FileText, Check } from 'lucide-react';
+import { userApi, type PromptTemplateRecord } from '../services/api';
 
 interface PromptTemplate {
   id: string;
@@ -14,8 +15,6 @@ interface PromptTemplateSelectorProps {
   selectedTemplateId?: string;
 }
 
-const STORAGE_KEY = 'prompt_templates';
-
 export default function PromptTemplateSelector({
   isOpen,
   onClose,
@@ -23,22 +22,23 @@ export default function PromptTemplateSelector({
   selectedTemplateId,
 }: PromptTemplateSelectorProps) {
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
-      loadTemplates();
+      void loadTemplates();
     }
   }, [isOpen, selectedTemplateId]);
 
-  const loadTemplates = () => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        setTemplates(JSON.parse(saved));
-      }
-    } catch {
+  const loadTemplates = async () => {
+    setIsLoading(true);
+    const response = await userApi.listPromptTemplates();
+    if (response.ok && Array.isArray(response.data)) {
+      setTemplates(response.data as PromptTemplateRecord[]);
+    } else {
       setTemplates([]);
     }
+    setIsLoading(false);
   };
 
   const handleSelect = (template: PromptTemplate) => {
@@ -63,7 +63,11 @@ export default function PromptTemplateSelector({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
-          {templates.length === 0 ? (
+          {isLoading ? (
+            <div className="text-center py-12 text-gray-400">
+              <p className="text-sm">加载中...</p>
+            </div>
+          ) : templates.length === 0 ? (
             <div className="text-center py-12 text-gray-400">
               <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
               <p className="text-sm">暂无可用模版</p>

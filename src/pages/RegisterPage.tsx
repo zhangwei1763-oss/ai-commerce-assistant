@@ -6,12 +6,13 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { buildApiUrl } from '../services/api';
 
 type RegisterMethod = 'email' | 'phone';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
-  const { register } = useAuth();
+  const { register, sendEmailCode } = useAuth();
 
   const [method, setMethod] = useState<RegisterMethod>('email');
 
@@ -19,7 +20,10 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [emailPassword, setEmailPassword] = useState('');
   const [confirmEmailPassword, setConfirmEmailPassword] = useState('');
+  const [emailCode, setEmailCode] = useState('');
   const [username, setUsername] = useState('');
+  const [isSendingEmailCode, setIsSendingEmailCode] = useState(false);
+  const [emailCountdown, setEmailCountdown] = useState(0);
 
   // 手机号注册表单
   const [phone, setPhone] = useState('');
@@ -40,6 +44,39 @@ export default function RegisterPage() {
     }
   }, [countdown]);
 
+  React.useEffect(() => {
+    if (emailCountdown > 0) {
+      const timer = setTimeout(() => setEmailCountdown(emailCountdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [emailCountdown]);
+
+  const handleSendEmailCode = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError('请输入正确的邮箱地址');
+      return;
+    }
+
+    setError('');
+    setIsSendingEmailCode(true);
+    const result = await sendEmailCode(email);
+
+    if (result.success) {
+      setEmailCountdown(60);
+      if (result.devCode) {
+        setError(`邮箱验证码（开发模式）: ${result.devCode}`);
+        setTimeout(() => setError(''), 30000);
+      } else {
+        setError(result.message || '验证码已发送');
+        setTimeout(() => setError(''), 3000);
+      }
+    } else {
+      setError(result.message || '验证码发送失败');
+    }
+
+    setIsSendingEmailCode(false);
+  };
+
   // 发送验证码
   const handleSendCode = async () => {
     if (!/^1\d{10}$/.test(phone)) {
@@ -51,7 +88,7 @@ export default function RegisterPage() {
     setIsSendingCode(true);
 
     try {
-      const response = await fetch('/api/sms/send-code', {
+      const response = await fetch(buildApiUrl('/api/sms/send-code'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
@@ -94,10 +131,20 @@ export default function RegisterPage() {
       return;
     }
 
+    if (!/^\d{6}$/.test(emailCode)) {
+      setError('请输入6位邮箱验证码');
+      return;
+    }
+
     setIsLoading(true);
-    const result = await register(email, emailPassword, username || undefined);
+    const result = await register(email, emailCode, emailPassword, username || undefined);
     if (result.success) {
-      navigate('/');
+      navigate('/login', {
+        state: {
+          message: result.message || '注册成功，请登录',
+          email,
+        },
+      });
     } else {
       setError(result.message || '注册失败');
     }
@@ -132,7 +179,7 @@ export default function RegisterPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/sms/register-phone', {
+      const response = await fetch(buildApiUrl('/api/sms/register-phone'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -199,6 +246,7 @@ export default function RegisterPage() {
           {error && (
             <div className={`mb-4 p-3 rounded-lg text-sm ${
               error.includes('验证码（开发模式）')
+              || error.includes('邮箱验证码（开发模式）')
                 ? 'bg-blue-50 text-blue-700'
                 : 'bg-red-50 text-red-700'
             }`}>
@@ -236,6 +284,33 @@ export default function RegisterPage() {
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
                   placeholder="怎么称呼您？"
                 />
+              </div>
+
+              <div>
+                <label htmlFor="emailCode" className="block text-sm font-medium text-gray-700 mb-1">
+                  邮箱验证码
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="emailCode"
+                    type="text"
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value)}
+                    required
+                    pattern="\d{6}"
+                    maxLength={6}
+                    className="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+                    placeholder="6位验证码"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendEmailCode}
+                    disabled={isSendingEmailCode || emailCountdown > 0}
+                    className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {emailCountdown > 0 ? `${emailCountdown}秒` : isSendingEmailCode ? '发送中...' : '发送验证码'}
+                  </button>
+                </div>
               </div>
 
               <div>

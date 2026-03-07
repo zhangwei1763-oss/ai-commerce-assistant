@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Film, Image as ImageIcon, User, Loader2, X, AlertCircle } from 'lucide-react';
 import type { GeneratedScript, Step1FormData, Step3VideoTask } from '../../App';
+import { buildApiUrl } from '../../services/api';
 
 type Step3Props = {
   onNext: () => void;
@@ -218,7 +219,7 @@ export default function Step3({
         const pickedImage = allImages[i % allImages.length];
         const prompt = normalizePrompt(script);
         const durationSeconds = resolveDurationSeconds(script);
-        const response = await fetch('/api/generate-video', {
+        const response = await fetch(buildApiUrl('/api/generate-video'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -270,7 +271,7 @@ export default function Step3({
         const currentTasks = submittedTasks.filter((task) => remaining.has(task.scriptId));
 
         for (const task of currentTasks) {
-          const statusRes = await fetch('/api/video-status', {
+          const statusRes = await fetch(buildApiUrl('/api/video-status'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ apiKey: videoApiKey, taskId: task.taskId }),

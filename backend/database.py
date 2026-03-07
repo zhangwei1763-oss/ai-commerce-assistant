@@ -1,18 +1,27 @@
 """
 数据库连接模块
-使用 SQLAlchemy 管理 SQLite 数据库连接，提供依赖注入。
+使用 SQLAlchemy 管理 SQLite / PostgreSQL 数据库连接，提供依赖注入。
 """
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from config import settings
 
-# 创建数据库引擎（SQLite 需要 check_same_thread=False）
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    echo=False,
-)
+
+def _create_engine():
+    """根据数据库类型创建引擎。"""
+    engine_kwargs = {
+        "echo": False,
+        "pool_pre_ping": True,
+    }
+
+    if settings.DATABASE_URL.startswith("sqlite"):
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+    return create_engine(settings.DATABASE_URL, **engine_kwargs)
+
+
+engine = _create_engine()
 
 # 会话工厂
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

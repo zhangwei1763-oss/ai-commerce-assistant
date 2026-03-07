@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Pencil, Trash2, Save, X as XIcon } from 'lucide-react';
+import { X, Plus, Pencil, Trash2, Save } from 'lucide-react';
+import { userApi, type PromptTemplateRecord } from '../services/api';
 
 interface PromptTemplate {
   id: string;
@@ -12,39 +13,36 @@ interface PromptTemplateModalProps {
   onClose: () => void;
 }
 
-const STORAGE_KEY = 'prompt_templates';
-
 export default function PromptTemplateModal({ isOpen, onClose }: PromptTemplateModalProps) {
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [isEditing, setIsEditing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editContent, setEditContent] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
-      loadTemplates();
+      void loadTemplates();
     }
   }, [isOpen]);
 
-  const loadTemplates = () => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        setTemplates(JSON.parse(saved));
-      }
-    } catch {
+  const loadTemplates = async () => {
+    setIsLoading(true);
+    const response = await userApi.listPromptTemplates();
+    if (response.ok && Array.isArray(response.data)) {
+      setTemplates(response.data as PromptTemplateRecord[]);
+    } else {
       setTemplates([]);
     }
+    setIsLoading(false);
   };
 
-  const saveTemplates = (newTemplates: PromptTemplate[]) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newTemplates));
-      setTemplates(newTemplates);
-    } catch {
-      // Ignore storage errors
-    }
+  const showMessage = (type: 'success' | 'error', text: string) => {
+    setMessage({ type, text });
+    window.setTimeout(() => setMessage(null), 3000);
   };
 
   const handleCreate = () => {
@@ -61,30 +59,52 @@ export default function PromptTemplateModal({ isOpen, onClose }: PromptTemplateM
     setIsEditing(true);
   };
 
-  const handleDelete = (id: string) => {
-    const newTemplates = templates.filter(t => t.id !== id);
-    saveTemplates(newTemplates);
+  const handleDelete = async (id: string) => {
+    const response = await userApi.deletePromptTemplate(id);
+    if (response.ok) {
+      setTemplates((prev) => prev.filter((item) => item.id !== id));
+      showMessage('success', '模板已删除');
+    } else {
+      showMessage('error', response.message || '删除失败');
+    }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editName.trim() || !editContent.trim()) return;
 
+    setIsSaving(true);
     if (editingId) {
-      const newTemplates = templates.map(t =>
-        t.id === editingId
-          ? { ...t, name: editName.trim(), content: editContent.trim() }
-          : t
-      );
-      saveTemplates(newTemplates);
-    } else {
-      const newTemplate: PromptTemplate = {
-        id: Date.now().toString(),
+      const response = await userApi.updatePromptTemplate(editingId, {
         name: editName.trim(),
         content: editContent.trim(),
-      };
-      saveTemplates([...templates, newTemplate]);
+      });
+      if (!response.ok || !response.data) {
+        setIsSaving(false);
+        showMessage('error', response.message || '更新失败');
+        return;
+      }
+      setTemplates((prev) => prev.map((item) => (
+        item.id === editingId ? response.data as PromptTemplateRecord : item
+      )));
+      showMessage('success', '模板已更新');
+    } else {
+      const response = await userApi.createPromptTemplate({
+        name: editName.trim(),
+        content: editContent.trim(),
+      });
+      if (!response.ok || !response.data) {
+        setIsSaving(false);
+        showMessage('error', response.message || '创建失败');
+        return;
+      }
+      setTemplates((prev) => [response.data as PromptTemplateRecord, ...prev]);
+      showMessage('success', '模板已创建');
     }
+    setIsSaving(false);
     setIsEditing(false);
+    setEditingId(null);
+    setEditName('');
+    setEditContent('');
   };
 
   const handleCancelEdit = () => {
@@ -111,6 +131,13 @@ export default function PromptTemplateModal({ isOpen, onClose }: PromptTemplateM
         </div>
 
         <div className="flex-1 overflow-y-auto p-6">
+          {message && (
+            <div className={`mb-4 rounded-lg px-4 py-3 text-sm ${
+              message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+            }`}>
+              {message.text}
+            </div>
+          )}
           {!isEditing ? (
             <>
               <button
@@ -122,7 +149,11 @@ export default function PromptTemplateModal({ isOpen, onClose }: PromptTemplateM
                 新建模版
               </button>
 
-              {templates.length === 0 ? (
+              {isLoading ? (
+                <div className="text-center py-12 text-gray-400">
+                  <p>加载中...</p>
+                </div>
+              ) : templates.length === 0 ? (
                 <div className="text-center py-12 text-gray-400">
                   <p>暂无模版，点击上方按钮创建第一个模版</p>
                 </div>
@@ -153,7 +184,7 @@ export default function PromptTemplateModal({ isOpen, onClose }: PromptTemplateM
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDelete(template.id)}
+                            onClick={() => { void handleDelete(template.id); }}
                             className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 rounded transition-colors"
                             title="删除"
                           >
@@ -209,12 +240,12 @@ export default function PromptTemplateModal({ isOpen, onClose }: PromptTemplateM
                 </button>
                 <button
                   type="button"
-                  onClick={handleSave}
-                  disabled={!editName.trim() || !editContent.trim()}
+                  onClick={() => { void handleSave(); }}
+                  disabled={!editName.trim() || !editContent.trim() || isSaving}
                   className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-[#008CCF] transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
                   <Save className="w-4 h-4" />
-                  确定
+                  {isSaving ? '保存中...' : '确定'}
                 </button>
               </div>
             </div>

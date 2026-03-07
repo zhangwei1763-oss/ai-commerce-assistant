@@ -1,5 +1,6 @@
 import React from 'react';
-import { Download, RefreshCw, HelpCircle, ChevronRight } from 'lucide-react';
+import { Download, RefreshCw, HelpCircle, ChevronRight, LogOut } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 const stepTitles = [
   '构建AI大脑',
@@ -9,6 +10,8 @@ const stepTitles = [
 ];
 
 export default function TopBar({ currentStep }: { currentStep: number }) {
+  const { user, logout } = useAuth();
+
   return (
     <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm z-10">
       <div className="flex items-center text-text-sub text-body">
@@ -16,8 +19,9 @@ export default function TopBar({ currentStep }: { currentStep: number }) {
         <ChevronRight className="w-4 h-4 mx-2" />
         <span className="text-text-main font-semibold">{stepTitles[currentStep - 1]}</span>
       </div>
-      
+
       <div className="flex items-center space-x-2">
+        <span className="text-sm text-gray-500 max-w-[220px] truncate">{user?.email}</span>
         <button className="flex items-center px-3 py-1.5 text-text-sub hover:bg-gray-100 rounded transition-colors">
           <Download className="w-4 h-4 mr-1.5" />
           <span>导出</span>
@@ -29,6 +33,14 @@ export default function TopBar({ currentStep }: { currentStep: number }) {
         <button className="flex items-center px-3 py-1.5 text-text-sub hover:bg-gray-100 rounded transition-colors">
           <HelpCircle className="w-4 h-4 mr-1.5" />
           <span>帮助</span>
+        </button>
+        <button
+          type="button"
+          onClick={logout}
+          className="flex items-center px-3 py-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+        >
+          <LogOut className="w-4 h-4 mr-1.5" />
+          <span>退出登录</span>
         </button>
       </div>
     </div>

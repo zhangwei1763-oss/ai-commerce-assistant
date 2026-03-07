@@ -20,12 +20,16 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证密码"""
-    return pwd_context.verify(plain_password, hashed_password)
+    # bcrypt 有 72 字节限制，先截断
+    password_bytes = plain_password.encode('utf-8')[:72]
+    return pwd_context.verify(password_bytes.decode('utf-8', errors='ignore'), hashed_password)
 
 
 def get_password_hash(password: str) -> str:
     """生成密码哈希"""
-    return pwd_context.hash(password)
+    # bcrypt 有 72 字节限制，先截断
+    password_bytes = password.encode('utf-8')[:72]
+    return pwd_context.hash(password_bytes.decode('utf-8', errors='ignore'))
 
 
 # ---- JWT Token ----
@@ -96,3 +100,17 @@ def generate_sms_id() -> str:
     import time
     timestamp = int(time.time() * 1000)
     return f"sms_{timestamp}"
+
+
+def generate_email_verification_id() -> str:
+    """生成邮箱验证码 ID"""
+    import time
+    timestamp = int(time.time() * 1000)
+    return f"email_{timestamp}"
+
+
+def generate_prompt_template_id() -> str:
+    """生成提示词模板 ID"""
+    import time
+    timestamp = int(time.time() * 1000)
+    return f"tpl_{timestamp}"

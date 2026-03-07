@@ -1,28 +1,45 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { buildApiUrl } from '../services/api';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   textApiKey: string;
-  setTextApiKey: React.Dispatch<React.SetStateAction<string>>;
   videoApiKey: string;
-  setVideoApiKey: React.Dispatch<React.SetStateAction<string>>;
+  onSave: (payload: {
+    textApiKey: string;
+    videoApiKey: string;
+  }) => Promise<void>;
 }
 
 export default function SettingsModal({
   isOpen,
   onClose,
   textApiKey,
-  setTextApiKey,
   videoApiKey,
-  setVideoApiKey,
+  onSave,
 }: SettingsModalProps) {
+  const [draftTextApiKey, setDraftTextApiKey] = useState(textApiKey);
+  const [draftVideoApiKey, setDraftVideoApiKey] = useState(videoApiKey);
   const [textApiMessage, setTextApiMessage] = useState('');
   const [videoApiMessage, setVideoApiMessage] = useState('');
-
   const [textApiStatus, setTextApiStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [videoApiStatus, setVideoApiStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [saveMessage, setSaveMessage] = useState('');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setDraftTextApiKey(textApiKey);
+    setDraftVideoApiKey(videoApiKey);
+    setTextApiMessage('');
+    setVideoApiMessage('');
+    setSaveMessage('');
+    setTextApiStatus('idle');
+    setVideoApiStatus('idle');
+    setSaveStatus('idle');
+  }, [isOpen, textApiKey, videoApiKey]);
 
   if (!isOpen) return null;
 
@@ -32,7 +49,7 @@ export default function SettingsModal({
     try {
       let response: Response;
       try {
-        response = await fetch(new URL('/api/test-key', window.location.origin).toString(), {
+        response = await fetch(buildApiUrl('/api/test-key'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -67,11 +84,11 @@ export default function SettingsModal({
   };
 
   const testTextApi = async () => {
-    if (!textApiKey) return;
+    if (!draftTextApiKey.trim()) return;
     setTextApiStatus('testing');
     setTextApiMessage('');
     try {
-      const message = await runApiKeyTest('text', textApiKey);
+      const message = await runApiKeyTest('text', draftTextApiKey.trim());
       setTextApiStatus('success');
       setTextApiMessage(message);
     } catch (error) {
@@ -81,16 +98,33 @@ export default function SettingsModal({
   };
 
   const testVideoApi = async () => {
-    if (!videoApiKey) return;
+    if (!draftVideoApiKey.trim()) return;
     setVideoApiStatus('testing');
     setVideoApiMessage('');
     try {
-      const message = await runApiKeyTest('video', videoApiKey);
+      const message = await runApiKeyTest('video', draftVideoApiKey.trim());
       setVideoApiStatus('success');
       setVideoApiMessage(message);
     } catch (error) {
       setVideoApiStatus('error');
       setVideoApiMessage(error instanceof Error ? error.message : '连接测试失败');
+    }
+  };
+
+  const handleSave = async () => {
+    setSaveStatus('saving');
+    setSaveMessage('');
+    try {
+      await onSave({
+        textApiKey: draftTextApiKey,
+        videoApiKey: draftVideoApiKey,
+      });
+      setSaveStatus('success');
+      setSaveMessage('已保存到数据库，下次登录会自动加载');
+      onClose();
+    } catch (error) {
+      setSaveStatus('error');
+      setSaveMessage(error instanceof Error ? error.message : '保存失败');
     }
   };
 
@@ -118,9 +152,9 @@ export default function SettingsModal({
               <input
                 type="password"
                 placeholder="sk-..."
-                value={textApiKey}
+                value={draftTextApiKey}
                 onChange={(e) => {
-                  setTextApiKey(e.target.value);
+                  setDraftTextApiKey(e.target.value);
                   setTextApiStatus('idle');
                 }}
                 onKeyDown={(e) => {
@@ -136,7 +170,7 @@ export default function SettingsModal({
                 onClick={() => {
                   void testTextApi();
                 }}
-                disabled={!textApiKey || textApiStatus === 'testing'}
+                disabled={!draftTextApiKey.trim() || textApiStatus === 'testing'}
                 className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center min-w-[100px] justify-center"
               >
                 {textApiStatus === 'testing' ? (
@@ -167,9 +201,9 @@ export default function SettingsModal({
               <input
                 type="password"
                 placeholder="输入 Seedance API Key..."
-                value={videoApiKey}
+                value={draftVideoApiKey}
                 onChange={(e) => {
-                  setVideoApiKey(e.target.value);
+                  setDraftVideoApiKey(e.target.value);
                   setVideoApiStatus('idle');
                 }}
                 onKeyDown={(e) => {
@@ -185,7 +219,7 @@ export default function SettingsModal({
                 onClick={() => {
                   void testVideoApi();
                 }}
-                disabled={!videoApiKey || videoApiStatus === 'testing'}
+                disabled={!draftVideoApiKey.trim() || videoApiStatus === 'testing'}
                 className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center min-w-[100px] justify-center"
               >
                 {videoApiStatus === 'testing' ? (
@@ -206,15 +240,21 @@ export default function SettingsModal({
             )}
             <p className="text-xs text-gray-500">用于第3步：根据脚本和提示词自动生成视频画面。</p>
           </div>
+
+          {saveStatus === 'error' && (
+            <p className="text-xs text-red-500">{saveMessage}</p>
+          )}
         </div>
 
         <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end">
           <button
             type="button"
-            onClick={onClose}
-            className="px-6 py-2 bg-accent text-white rounded-lg hover:bg-[#008CCF] transition-colors text-sm font-medium shadow-sm"
+            onClick={() => { void handleSave(); }}
+            disabled={saveStatus === 'saving'}
+            className="px-6 py-2 bg-accent text-white rounded-lg hover:bg-[#008CCF] transition-colors text-sm font-medium shadow-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center"
           >
-            保存并关闭
+            {saveStatus === 'saving' && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+            {saveStatus === 'saving' ? '保存中...' : '保存并关闭'}
           </button>
         </div>
       </div>

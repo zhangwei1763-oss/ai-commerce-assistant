@@ -12,8 +12,20 @@ from database import get_db
 from models import User
 from auth.dependencies import get_current_user
 from services.apikey_service import ApiKeyService
+from services.prompt_template_service import PromptTemplateService
 
 router = APIRouter(prefix="/api/user", tags=["用户"])
+
+
+def _normalize_prompt_template_fields(name: str, content: str) -> tuple[str, str]:
+    normalized_name = name.strip()
+    normalized_content = content.strip()
+    if not normalized_name or not normalized_content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="模板名称和内容不能为空",
+        )
+    return normalized_name, normalized_content
 
 
 # ---- 请求/响应模型 ----
@@ -37,6 +49,21 @@ class ApiKeyResponse(BaseModel):
     updated_at: str
 
 
+class PromptTemplateRequest(BaseModel):
+    """提示词模板创建/更新请求"""
+    name: str = Field(..., min_length=1, max_length=100, description="模板名称")
+    content: str = Field(..., min_length=1, description="模板内容")
+
+
+class PromptTemplateResponse(BaseModel):
+    """提示词模板响应"""
+    id: str
+    name: str
+    content: str
+    created_at: str
+    updated_at: str
+
+
 # ---- API 端点 ----
 @router.get("/apikeys", response_model=List[ApiKeyResponse])
 async def list_api_keys(
@@ -49,7 +76,13 @@ async def list_api_keys(
     需要认证：Bearer Token
     """
     keys = ApiKeyService.get_user_api_keys(db, current_user.id)
-    return [ApiKeyResponse(**ApiKeyService.decrypt_api_key_obj(key)) for key in keys]
+    response_items = []
+    for key in keys:
+        decrypted = ApiKeyService.try_decrypt_api_key_obj(key)
+        if decrypted is None:
+            continue
+        response_items.append(ApiKeyResponse(**decrypted))
+    return response_items
 
 
 @router.post("/apikeys", response_model=ApiKeyResponse, status_code=status.HTTP_201_CREATED)
@@ -75,6 +108,105 @@ async def create_or_update_api_key(
         model_name=request.model_name or None
     )
     return ApiKeyResponse(**ApiKeyService.decrypt_api_key_obj(key))
+
+
+@router.get("/prompt-templates", response_model=List[PromptTemplateResponse])
+async def list_prompt_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取当前用户的提示词模板列表
+
+    需要认证：Bearer Token
+    """
+    templates = PromptTemplateService.list_user_prompt_templates(db, current_user.id)
+    return [
+        PromptTemplateResponse(
+            id=template.id,
+            name=template.name,
+            content=template.content,
+            created_at=template.created_at.isoformat(),
+            updated_at=template.updated_at.isoformat(),
+        )
+        for template in templates
+    ]
+
+
+@router.post("/prompt-templates", response_model=PromptTemplateResponse, status_code=status.HTTP_201_CREATED)
+async def create_prompt_template(
+    request: PromptTemplateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    创建提示词模板
+
+    需要认证：Bearer Token
+    """
+    normalized_name, normalized_content = _normalize_prompt_template_fields(request.name, request.content)
+    template = PromptTemplateService.create_prompt_template(
+        db=db,
+        user_id=current_user.id,
+        name=normalized_name,
+        content=normalized_content,
+    )
+    return PromptTemplateResponse(
+        id=template.id,
+        name=template.name,
+        content=template.content,
+        created_at=template.created_at.isoformat(),
+        updated_at=template.updated_at.isoformat(),
+    )
+
+
+@router.put("/prompt-templates/{template_id}", response_model=PromptTemplateResponse)
+async def update_prompt_template(
+    template_id: str,
+    request: PromptTemplateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    更新提示词模板
+
+    需要认证：Bearer Token
+    """
+    normalized_name, normalized_content = _normalize_prompt_template_fields(request.name, request.content)
+    template = PromptTemplateService.update_prompt_template(
+        db=db,
+        user_id=current_user.id,
+        template_id=template_id,
+        name=normalized_name,
+        content=normalized_content,
+    )
+    return PromptTemplateResponse(
+        id=template.id,
+        name=template.name,
+        content=template.content,
+        created_at=template.created_at.isoformat(),
+        updated_at=template.updated_at.isoformat(),
+    )
+
+
+@router.delete("/prompt-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_prompt_template(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    删除提示词模板
+
+    需要认证：Bearer Token
+    """
+    success = PromptTemplateService.delete_prompt_template(db, template_id=template_id, user_id=current_user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="提示词模板不存在"
+        )
+    return None
 
 
 @router.delete("/apikeys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)

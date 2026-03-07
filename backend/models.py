@@ -27,6 +27,7 @@ class User(Base):
 
     # 关系
     api_keys = relationship("UserApiKey", back_populates="user", cascade="all, delete-orphan")
+    prompt_templates = relationship("PromptTemplate", back_populates="user", cascade="all, delete-orphan")
     products = relationship("Product", back_populates="user", cascade="all, delete-orphan")
     scripts = relationship("Script", back_populates="user", cascade="all, delete-orphan")
     videos = relationship("Video", back_populates="user", cascade="all, delete-orphan")
@@ -51,6 +52,20 @@ class UserApiKey(Base):
     user = relationship("User", back_populates="api_keys")
 
 
+class PromptTemplate(Base):
+    """用户提示词模板表"""
+    __tablename__ = "prompt_templates"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="prompt_templates")
+
+
 class SmsVerification(Base):
     """短信验证码表"""
     __tablename__ = "sms_verifications"
@@ -58,6 +73,18 @@ class SmsVerification(Base):
     id = Column(String, primary_key=True)                    # sms_001
     phone = Column(String, nullable=False, index=True)
     code = Column(String, nullable=False)                    # 6 位验证码
+    verified = Column(Boolean, default=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class EmailVerification(Base):
+    """邮箱验证码表"""
+    __tablename__ = "email_verifications"
+
+    id = Column(String, primary_key=True)
+    email = Column(String, nullable=False, index=True)
+    code = Column(String, nullable=False)
     verified = Column(Boolean, default=False)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

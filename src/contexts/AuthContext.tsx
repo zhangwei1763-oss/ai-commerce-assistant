@@ -19,7 +19,8 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
-  register: (email: string, password: string, username?: string) => Promise<{ success: boolean; message?: string }>;
+  sendEmailCode: (email: string) => Promise<{ success: boolean; message?: string; devCode?: string }>;
+  register: (email: string, code: string, password: string, username?: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -69,14 +70,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (email: string, password: string, username?: string) => {
+  const sendEmailCode = async (email: string) => {
     try {
-      const response = await authApi.register(email, password, username);
-      if (response.ok && response.data) {
-        const data = response.data as { access_token: string; user: User };
-        setAccessToken(data.access_token);
-        setUser(data.user);
-        return { success: true };
+      const response = await authApi.sendEmailCode(email);
+      if (response.ok) {
+        const data = response.data as { message?: string; dev_code?: string } | undefined;
+        return {
+          success: true,
+          message: data?.message || '验证码已发送',
+          devCode: data?.dev_code,
+        };
+      }
+      return { success: false, message: response.message || response.detail };
+    } catch {
+      return { success: false, message: '验证码发送失败，请稍后重试' };
+    }
+  };
+
+  const register = async (email: string, code: string, password: string, username?: string) => {
+    try {
+      const response = await authApi.register(email, code, password, username);
+      if (response.ok) {
+        const data = response.data as { message?: string } | undefined;
+        return { success: true, message: data?.message || '注册成功，请前往登录' };
       }
       return { success: false, message: response.message || response.detail };
     } catch {
@@ -103,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         isAuthenticated,
         login,
+        sendEmailCode,
         register,
         logout,
         refreshUser,
