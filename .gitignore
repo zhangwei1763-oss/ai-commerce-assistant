@@ -6,6 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+!backend/.env.prod.example
 
 # Python
 __pycache__/

@@ -90,8 +90,6 @@ cp backend/.env.prod.example backend/.env.prod
 - `DATABASE_URL`
 - `SECRET_KEY`
 - `API_KEY_ENCRYPTION_KEY`
-- `DOUBAO_API_KEY`
-- `SEEDANCE_API_KEY`
 - `CORS_ORIGINS`
 
 建议这样改：
@@ -118,6 +116,7 @@ TEMP_DIR=/app/storage/tmp
 - 前后端通过同一域名访问时，前端构建变量 `VITE_API_URL` 可以留空
 - 代码会直接请求相对路径 `/api/...`
 - `STORAGE_BACKEND=local` 是目前最适合这套代码的国内单机部署方式
+- 当前主流程支持“用户登录后自行填写并保存 API Key”，因此 `DOUBAO_API_KEY`、`SEEDANCE_API_KEY` 对系统启动不是必填；如果先留空，页面能正常启动，但用户必须在系统里配置自己的 Key 后，AI 生成功能才能用
 
 ### 3. 设置 Compose 里的数据库密码
 

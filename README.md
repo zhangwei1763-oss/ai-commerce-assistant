@@ -187,6 +187,12 @@ Vercel 环境变量至少设置：
 VITE_API_URL=https://your-backend-domain.com
 ```
 
+说明：
+
+- 当前前台主流程支持“用户登录后自行填写并保存 API Key”
+- 因此部署后端时，`DOUBAO_API_KEY`、`SEEDANCE_API_KEY` 不是系统启动必填项
+- 如果这两个环境变量留空，页面仍可启动；只是用户在页面里还没配置自己的 Key 时，AI 生成功能不可用
+
 ### 后端先部署到 Render
 
 仓库已经补好了：
