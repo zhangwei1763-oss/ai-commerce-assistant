@@ -1,112 +1,152 @@
 """
-Seedance 2.0 API 封装模块
-封装 Seedance 视频生成接口，提供异步调用和状态轮询。
+Seedance 视频生成 API 封装
+统一对接官方异步任务接口，并向上层返回兼容项目当前使用的数据结构。
 """
 
+from __future__ import annotations
+
+import os
+from typing import Optional, List, Dict, Any
+
 import httpx
-from typing import Optional, List, Dict
+
 from config import settings
+
+DEFAULT_TASK_ENDPOINT = "https://operator.las.cn-beijing.volces.com/api/v1/contents/generations/tasks"
+LEGACY_SEEDANCE_API_URL = "https://api.seedance.com/v1"
+DEFAULT_VIDEO_MODEL = "doubao-seedance-1-0-lite-i2v-250428"
+DEFAULT_RATIO = "9:16"
+DEFAULT_RESOLUTION = "720p"
 
 
 class SeedanceClient:
-    """Seedance视频生成API客户端"""
+    """Seedance 视频生成 API 客户端"""
 
     def __init__(self):
         self.api_key = settings.SEEDANCE_API_KEY
         self.api_url = settings.SEEDANCE_API_URL
 
-    def _headers(self) -> dict:
+    def _resolve_task_endpoint(self) -> str:
+        configured = (self.api_url or "").strip()
+        if not configured or configured == LEGACY_SEEDANCE_API_URL:
+            return DEFAULT_TASK_ENDPOINT
+        normalized = configured.rstrip("/")
+        if normalized.endswith("/contents/generations/tasks"):
+            return normalized
+        return f"{normalized}/contents/generations/tasks"
+
+    def _resolve_model(self) -> str:
+        if settings.ARK_VIDEO_MODEL.strip():
+            return settings.ARK_VIDEO_MODEL.strip()
+        if settings.ARK_MODEL.strip():
+            return settings.ARK_MODEL.strip()
+        return DEFAULT_VIDEO_MODEL
+
+    def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+    def _normalize_reference_image(self, reference_images: Optional[Dict[str, List[str]]]) -> str:
+        if not reference_images:
+            return ""
+        for key in ("product", "person"):
+            items = reference_images.get(key) or []
+            if items:
+                return items[0]
+        return ""
 
     async def generate_video(
         self,
         prompt: str,
         style: str = "实景风",
         reference_images: Optional[Dict[str, List[str]]] = None,
-        resolution: str = "1080x1920",
+        resolution: str = DEFAULT_RESOLUTION,
         fps: int = 30,
-        duration: int = 15,
-        aspect_ratio: str = "9:16",
-    ) -> dict:
-        """
-        提交视频生成任务。
+        duration: int = 5,
+        aspect_ratio: str = DEFAULT_RATIO,
+    ) -> dict[str, Any]:
+        del fps  # 官方任务接口当前不使用该参数
 
-        参数:
-            prompt: 画面提示词
-            style: 视觉风格（实景风/动漫风等）
-            reference_images: 参考图片（产品图、人物图）
-            resolution: 输出分辨率
-            fps: 帧率
-            duration: 视频时长（秒）
-            aspect_ratio: 画面比例
-
-        返回:
-            包含 task_id 的响应字典
-        """
-        url = f"{self.api_url}/videos/generate"
-
-        payload = {
-            "prompt": prompt,
-            "style": style,
-            "resolution": resolution,
-            "fps": fps,
-            "duration": duration,
-            "aspect_ratio": aspect_ratio,
+        task_endpoint = self._resolve_task_endpoint()
+        prompt_text = f"{style}，{prompt}".strip("，")
+        payload: dict[str, Any] = {
+            "model": self._resolve_model(),
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt_text,
+                }
+            ],
+            "resolution": resolution or DEFAULT_RESOLUTION,
+            "ratio": aspect_ratio or DEFAULT_RATIO,
+            "duration": max(2, min(12, int(duration))),
+            "watermark": False,
         }
 
-        if reference_images:
-            payload["reference_images"] = reference_images
+        reference_image = self._normalize_reference_image(reference_images)
+        if reference_image:
+            payload["content"].append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": reference_image,
+                    },
+                }
+            )
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, headers=self._headers(), json=payload)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=15.0), follow_redirects=True) as client:
+            response = await client.post(task_endpoint, headers=self._headers(), json=payload)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
 
-    async def check_status(self, task_id: str) -> dict:
-        """
-        查询视频生成任务的状态。
+        return {
+            "task_id": data.get("id") or data.get("task_id"),
+            "status": "processing",
+            "raw": data,
+        }
 
-        参数:
-            task_id: Seedance 任务ID
+    async def check_status(self, task_id: str) -> dict[str, Any]:
+        task_endpoint = self._resolve_task_endpoint()
+        status_url = f"{task_endpoint.rstrip('/')}/{task_id}"
 
-        返回:
-            {
-                "task_id": "...",
-                "status": "pending|processing|completed|failed",
-                "progress": 0-100,
-                "video_url": "..." (完成时才有)
-            }
-        """
-        url = f"{self.api_url}/videos/status/{task_id}"
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, headers=self._headers())
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=15.0), follow_redirects=True) as client:
+            response = await client.get(status_url, headers=self._headers())
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+
+        raw_status = str(data.get("status") or data.get("state") or "").lower()
+        if raw_status.endswith("succeeded") or raw_status in {"success", "succeeded", "completed"}:
+            status = "completed"
+        elif raw_status.endswith("failed") or raw_status.endswith("expired") or raw_status.endswith("cancelled") or raw_status.endswith("canceled"):
+            status = "failed"
+        else:
+            status = "processing"
+
+        content = data.get("content") or {}
+        video_url = ""
+        if isinstance(content, dict):
+            video_url = str(content.get("video_url") or content.get("videoUrl") or "").strip()
+
+        return {
+            "task_id": task_id,
+            "status": status,
+            "progress": 100 if status == "completed" else 50,
+            "video_url": video_url,
+            "raw": data,
+        }
 
     async def download_video(self, video_url: str, save_path: str) -> str:
-        """
-        下载生成完成的视频到本地。
-
-        参数:
-            video_url: 视频在线地址
-            save_path: 本地保存路径
-
-        返回:
-            本地保存路径
-        """
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0), follow_redirects=True) as client:
             response = await client.get(video_url)
             response.raise_for_status()
 
-            with open(save_path, "wb") as f:
-                f.write(response.content)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "wb") as file_obj:
+            file_obj.write(response.content)
 
         return save_path
 
 
-# 全局单例
 seedance_client = SeedanceClient()

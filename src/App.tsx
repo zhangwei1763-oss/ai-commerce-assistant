@@ -93,6 +93,8 @@ export default function App() {
 
   const textApiKey = storedTextApiKey?.api_key || '';
   const videoApiKey = storedVideoApiKey?.api_key || '';
+  const videoApiEndpoint = storedVideoApiKey?.api_endpoint || '';
+  const videoModelName = storedVideoApiKey?.model_name || '';
 
   useEffect(() => {
     const loadUserApiKeys = async () => {
@@ -129,6 +131,8 @@ export default function App() {
       const response = await userApi.createApiKey({
         provider: 'DOUBAO',
         api_key: normalizedTextKey,
+        api_endpoint: storedTextApiKey?.api_endpoint || undefined,
+        model_name: storedTextApiKey?.model_name || undefined,
       });
       if (!response.ok) {
         throw new Error(response.message || '文案 API Key 保存失败');
@@ -150,6 +154,8 @@ export default function App() {
       const response = await userApi.createApiKey({
         provider: 'SEEDANCE',
         api_key: normalizedVideoKey,
+        api_endpoint: storedVideoApiKey?.api_endpoint || undefined,
+        model_name: storedVideoApiKey?.model_name || undefined,
       });
       if (!response.ok) {
         throw new Error(response.message || '视频 API Key 保存失败');
@@ -217,6 +223,8 @@ export default function App() {
             onNext={handleNext}
             generatedScripts={generatedScripts}
             videoApiKey={videoApiKey}
+            videoApiEndpoint={videoApiEndpoint}
+            videoModelName={videoModelName}
             step1Data={step1Data}
             videoTasks={step3VideoTasks}
             setVideoTasks={setStep3VideoTasks}

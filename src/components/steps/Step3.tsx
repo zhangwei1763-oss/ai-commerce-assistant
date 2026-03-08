@@ -7,6 +7,8 @@ type Step3Props = {
   onNext: () => void;
   generatedScripts: GeneratedScript[];
   videoApiKey?: string;
+  videoApiEndpoint?: string;
+  videoModelName?: string;
   step1Data: Step1FormData;
   videoTasks: Step3VideoTask[];
   setVideoTasks: React.Dispatch<React.SetStateAction<Step3VideoTask[]>>;
@@ -56,6 +58,8 @@ export default function Step3({
   onNext,
   generatedScripts,
   videoApiKey,
+  videoApiEndpoint,
+  videoModelName,
   step1Data,
   videoTasks,
   setVideoTasks,
@@ -214,45 +218,66 @@ export default function Step3({
 
     try {
       const submittedTasks: Step3VideoTask[] = [];
+      const submissionErrors: string[] = [];
       for (let i = 0; i < selectedScripts.length; i++) {
         const script = selectedScripts[i];
         const pickedImage = allImages[i % allImages.length];
         const prompt = normalizePrompt(script);
         const durationSeconds = resolveDurationSeconds(script);
-        const response = await fetch(buildApiUrl('/api/generate-video'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            apiKey: videoApiKey,
-            prompt,
-            style: renderStyle,
-            imageUrl: pickedImage.base64,
-            durationSeconds,
-          }),
-        });
+        try {
+          const response = await fetch(buildApiUrl('/api/generate-video'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              apiKey: videoApiKey,
+              apiEndpoint: videoApiEndpoint,
+              modelName: videoModelName,
+              prompt,
+              style: renderStyle,
+              imageUrl: pickedImage.base64,
+              durationSeconds,
+            }),
+          });
 
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data?.ok) {
-          throw new Error(data?.message || `脚本 ${script.title} 视频任务提交失败`);
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data?.ok) {
+            throw new Error(data?.message || data?.detail || `脚本 ${script.title} 视频任务提交失败`);
+          }
+
+          submittedTasks.push({
+            scriptId: script.id,
+            scriptTitle: script.title,
+            taskId: String(data.taskId || ''),
+            status: 'processing',
+            progress: 10,
+          });
+          setVideoTasks((prev) =>
+            prev.map((task) =>
+              task.scriptId === script.id ? { ...task, status: 'processing', progress: 10, taskId: String(data.taskId || '') } : task,
+            ),
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '视频任务提交失败';
+          submissionErrors.push(`${script.title}: ${message}`);
+          setVideoTasks((prev) =>
+            prev.map((task) =>
+              task.scriptId === script.id
+                ? { ...task, status: 'failed', progress: 0, error: message }
+                : task,
+            ),
+          );
         }
+      }
 
-        submittedTasks.push({
-          scriptId: script.id,
-          scriptTitle: script.title,
-          taskId: String(data.taskId || ''),
-          status: 'processing',
-          progress: 10,
-        });
-        setVideoTasks((prev) =>
-          prev.map((task) =>
-            task.scriptId === script.id ? { ...task, status: 'processing', progress: 10, taskId: String(data.taskId || '') } : task,
-          ),
-        );
+      if (!submittedTasks.length) {
+        setGenerateError(submissionErrors.join('；') || '视频任务提交失败');
+        return;
       }
 
       const startedAt = Date.now();
       const timeoutMs = 10 * 60 * 1000;
       let remaining = new Set(submittedTasks.map((task) => task.scriptId));
+      let failedCount = submissionErrors.length;
 
       while (remaining.size > 0) {
         if (Date.now() - startedAt > timeoutMs) {
@@ -279,13 +304,17 @@ export default function Step3({
           const statusData = await statusRes.json().catch(() => ({}));
 
           if (!statusRes.ok || !statusData?.ok) {
+            remaining.delete(task.scriptId);
+            failedCount += 1;
+            const message = statusData?.message || statusData?.detail || `脚本 ${task.scriptTitle} 状态查询失败`;
             setVideoTasks((prev) =>
               prev.map((item) =>
                 item.scriptId === task.scriptId
                   ? {
                       ...item,
-                      status: 'processing',
-                      progress: Math.min(90, item.progress + 8),
+                      status: 'failed',
+                      progress: 0,
+                      error: message,
                     }
                   : item,
               ),
@@ -311,6 +340,7 @@ export default function Step3({
             );
           } else if (status === 'failed') {
             remaining.delete(task.scriptId);
+            failedCount += 1;
             setVideoTasks((prev) =>
               prev.map((item) =>
                 item.scriptId === task.scriptId
@@ -337,6 +367,10 @@ export default function Step3({
             );
           }
         }
+      }
+
+      if (failedCount > 0) {
+        setGenerateError(`共有 ${failedCount} 个视频任务失败，请查看预览区错误信息`);
       }
     } catch (error) {
       setGenerateError(error instanceof Error ? error.message : '视频生成失败');
