@@ -13,15 +13,12 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from config import settings
+from services.provider_catalog import resolve_video_endpoint, resolve_video_model
 from services.storage_service import storage_service
 from utils.image_handler import decode_base64_image
 
 router = APIRouter()
 
-DEFAULT_VIDEO_TASK_ENDPOINT = "https://operator.las.cn-beijing.volces.com/api/v1/contents/generations/tasks"
-LEGACY_SEEDANCE_API_URL = "https://api.seedance.com/v1"
-DEFAULT_VIDEO_MODEL = "doubao-seedance-1-0-lite-i2v-250428"
 DEFAULT_RATIO = "9:16"
 DEFAULT_RESOLUTION = "720p"
 DEFAULT_DURATION_SECONDS = 5
@@ -76,30 +73,19 @@ def _http_error_message(response: httpx.Response, fallback: str) -> str:
 
 
 def _resolve_task_endpoint(api_endpoint: str | None) -> str:
-    candidate = (api_endpoint or "").strip()
-    if not candidate:
-        configured = (settings.SEEDANCE_API_URL or "").strip()
-        if configured and configured != LEGACY_SEEDANCE_API_URL:
-            candidate = configured
-
-    if not candidate:
-        return DEFAULT_VIDEO_TASK_ENDPOINT
-
-    normalized = candidate.rstrip("/")
+    normalized = resolve_video_endpoint("SEEDANCE", api_endpoint).rstrip("/")
+    if not normalized:
+        raise HTTPException(status_code=400, detail="请先在设置中填写视频 API 端点")
     if normalized.endswith("/contents/generations/tasks"):
         return normalized
     return f"{normalized}/contents/generations/tasks"
 
 
 def _resolve_video_model(model_name: str | None) -> str:
-    candidate = (model_name or "").strip()
-    if candidate:
-        return candidate
-    if settings.ARK_VIDEO_MODEL.strip():
-        return settings.ARK_VIDEO_MODEL.strip()
-    if settings.ARK_MODEL.strip():
-        return settings.ARK_MODEL.strip()
-    return DEFAULT_VIDEO_MODEL
+    resolved = resolve_video_model("SEEDANCE", model_name)
+    if not resolved:
+        raise HTTPException(status_code=400, detail="请先在设置中填写视频模型名称")
+    return resolved
 
 
 def _normalize_duration(duration_seconds: int) -> int:

@@ -15,7 +15,11 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from config import settings
+from services.provider_catalog import (
+    normalize_provider,
+    resolve_text_endpoint,
+    resolve_text_model,
+)
 
 router = APIRouter()
 
@@ -43,6 +47,9 @@ class ScriptOptionsPayload(BaseModel):
 
 class ScriptGenRequest(BaseModel):
     apiKey: str = ""
+    provider: str = ""
+    apiEndpoint: str = ""
+    modelName: str = ""
     options: ScriptOptionsPayload = Field(default_factory=ScriptOptionsPayload)
     promptTemplate: PromptTemplatePayload | None = None
     step1Data: Step1DataPayload = Field(default_factory=Step1DataPayload)
@@ -61,12 +68,18 @@ class ViralAnalysisPayload(BaseModel):
 
 class ViralAnalyzeRequest(BaseModel):
     apiKey: str = ""
+    provider: str = ""
+    apiEndpoint: str = ""
+    modelName: str = ""
     videoUrl: str = ""
     step1Data: Step1DataPayload = Field(default_factory=Step1DataPayload)
 
 
 class ViralDeriveRequest(BaseModel):
     apiKey: str = ""
+    provider: str = ""
+    apiEndpoint: str = ""
+    modelName: str = ""
     count: int = 10
     durationSeconds: int = 15
     analysis: ViralAnalysisPayload | None = None
@@ -77,7 +90,30 @@ def json_error(status_code: int, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"ok": False, "message": message})
 
 
-def extract_ark_output_text(payload: Any) -> str:
+def extract_model_output_text(payload: Any) -> str:
+    if isinstance(payload, dict):
+        choices = payload.get("choices")
+        if isinstance(choices, list):
+            for item in choices:
+                if not isinstance(item, dict):
+                    continue
+                message = item.get("message")
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+                if isinstance(content, list):
+                    chunks: list[str] = []
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        text = block.get("text")
+                        if isinstance(text, str) and text.strip():
+                            chunks.append(text.strip())
+                    if chunks:
+                        return "\n".join(chunks).strip()
+
     if isinstance(payload, dict):
         output_text = payload.get("output_text")
         if isinstance(output_text, str) and output_text.strip():
@@ -147,45 +183,78 @@ def parse_scripts_from_model_text(raw_text: str, count: int, duration_seconds: i
     return scripts
 
 
-def get_text_model() -> str:
-    return (
-        settings.ARK_TEXT_MODEL.strip()
-        or settings.ARK_MODEL.strip()
-        or settings.DOUBAO_MODEL.strip()
+def extract_api_error_message(payload: Any) -> str:
+    if isinstance(payload, dict):
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            for key in ("message", "detail", "reason"):
+                value = error_obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        for key in ("message", "detail", "reason"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(payload, str) and payload.strip():
+        return payload.strip()
+    return ""
+
+
+def should_retry_without_images(message: str) -> bool:
+    normalized = message.lower()
+    keywords = (
+        "image",
+        "vision",
+        "multimodal",
+        "image_url",
+        "图片",
+        "图像",
+        "多模态",
+        "content type",
     )
+    return any(keyword in normalized for keyword in keywords)
 
 
-def get_text_endpoint() -> str:
-    endpoint = settings.ARK_TEXT_TEST_ENDPOINT.strip()
-    if endpoint:
-        return endpoint
-    return f"{settings.DOUBAO_API_URL.rstrip('/')}/responses"
+def build_openai_messages(prompt: str, image_data_urls: list[str] | None = None) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": prompt,
+        }
+    ]
 
-
-async def call_ark_text_model(api_key: str, prompt: str, image_data_urls: list[str] | None = None) -> str:
-    image_blocks = [
-        {"type": "input_image", "image_url": image_url}
-        for image_url in (image_data_urls or [])
-        if isinstance(image_url, str) and image_url.startswith("data:image/")
-    ][:3]
-
-    payload = {
-        "model": get_text_model(),
-        "input": [
+    for image_url in (image_data_urls or [])[:3]:
+        if not isinstance(image_url, str) or not image_url.startswith("data:image/"):
+            continue
+        content.append(
             {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt},
-                    *image_blocks,
-                ],
+                "type": "image_url",
+                "image_url": {
+                    "url": image_url,
+                },
             }
-        ],
+        )
+
+    return [{"role": "user", "content": content}]
+
+
+async def post_chat_completion(
+    *,
+    api_key: str,
+    endpoint: str,
+    model_name: str,
+    prompt: str,
+    image_data_urls: list[str] | None = None,
+) -> str:
+    payload = {
+        "model": model_name,
+        "messages": build_openai_messages(prompt, image_data_urls),
     }
 
     timeout = httpx.Timeout(1800.0, connect=30.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
-            get_text_endpoint(),
+            endpoint,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
@@ -194,24 +263,56 @@ async def call_ark_text_model(api_key: str, prompt: str, image_data_urls: list[s
         )
 
     if response.status_code >= 400:
-        message = f"模型调用失败，状态码 {response.status_code}"
         try:
             error_body = response.json()
-            if isinstance(error_body, dict):
-                error_obj = error_body.get("error")
-                if isinstance(error_obj, dict) and isinstance(error_obj.get("message"), str):
-                    message = error_obj["message"]
-                elif isinstance(error_body.get("message"), str):
-                    message = error_body["message"]
         except Exception:
-            pass
+            error_body = response.text
+        message = extract_api_error_message(error_body) or f"模型调用失败，状态码 {response.status_code}"
         raise ValueError(message)
 
-    payload = response.json()
-    raw_text = extract_ark_output_text(payload)
+    response_payload = response.json()
+    raw_text = extract_model_output_text(response_payload)
     if not raw_text:
         raise ValueError("模型返回为空，请重试")
     return raw_text
+
+
+async def call_text_model(
+    *,
+    provider: str,
+    api_key: str,
+    api_endpoint: str,
+    model_name: str,
+    prompt: str,
+    image_data_urls: list[str] | None = None,
+) -> str:
+    normalized_provider = normalize_provider(provider, "text")
+    resolved_endpoint = resolve_text_endpoint(normalized_provider, api_endpoint)
+    resolved_model = resolve_text_model(normalized_provider, model_name)
+
+    if not resolved_endpoint:
+        raise ValueError("请先在设置中填写可用的文案 API 端点")
+    if not resolved_model:
+        raise ValueError("请先在设置中填写文案模型名称")
+
+    try:
+        return await post_chat_completion(
+            api_key=api_key,
+            endpoint=resolved_endpoint,
+            model_name=resolved_model,
+            prompt=prompt,
+            image_data_urls=image_data_urls,
+        )
+    except ValueError as error:
+        if image_data_urls and should_retry_without_images(str(error)):
+            return await post_chat_completion(
+                api_key=api_key,
+                endpoint=resolved_endpoint,
+                model_name=resolved_model,
+                prompt=prompt,
+                image_data_urls=[],
+            )
+        raise
 
 
 def get_storyboard_timings(duration_seconds: int) -> dict[str, int]:
@@ -417,7 +518,14 @@ async def generate_scripts(request: ScriptGenRequest) -> JSONResponse:
 
     try:
         prompt, count, duration_seconds = build_script_prompt(request)
-        raw_text = await call_ark_text_model(api_key, prompt, request.step1Data.imageDataUrls)
+        raw_text = await call_text_model(
+            provider=request.provider,
+            api_key=api_key,
+            api_endpoint=request.apiEndpoint,
+            model_name=request.modelName,
+            prompt=prompt,
+            image_data_urls=request.step1Data.imageDataUrls,
+        )
         scripts = parse_scripts_from_model_text(raw_text, count, duration_seconds)
         if not scripts:
             return json_error(502, "模型返回格式无法解析，请重试")
@@ -438,10 +546,13 @@ async def analyze_viral_video(request: ViralAnalyzeRequest) -> JSONResponse:
         return json_error(400, "请先输入爆款视频链接")
 
     try:
-        raw_text = await call_ark_text_model(
-            api_key,
-            build_viral_analysis_prompt(request),
-            request.step1Data.imageDataUrls,
+        raw_text = await call_text_model(
+            provider=request.provider,
+            api_key=api_key,
+            api_endpoint=request.apiEndpoint,
+            model_name=request.modelName,
+            prompt=build_viral_analysis_prompt(request),
+            image_data_urls=request.step1Data.imageDataUrls,
         )
         analysis = normalize_viral_analysis(parse_model_json(raw_text))
         return JSONResponse(status_code=200, content={"ok": True, "analysis": analysis})
@@ -461,7 +572,14 @@ async def derive_viral_scripts(request: ViralDeriveRequest) -> JSONResponse:
 
     try:
         prompt, count, duration_seconds = build_viral_derive_prompt(request)
-        raw_text = await call_ark_text_model(api_key, prompt, request.step1Data.imageDataUrls)
+        raw_text = await call_text_model(
+            provider=request.provider,
+            api_key=api_key,
+            api_endpoint=request.apiEndpoint,
+            model_name=request.modelName,
+            prompt=prompt,
+            image_data_urls=request.step1Data.imageDataUrls,
+        )
         scripts = parse_scripts_from_model_text(raw_text, count, duration_seconds)
         if not scripts:
             return json_error(502, "新脚本生成失败：模型返回无法解析")

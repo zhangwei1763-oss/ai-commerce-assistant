@@ -1,6 +1,6 @@
 """
 API Key 测试服务
-对齐前端当前使用的 Ark 兼容探测逻辑。
+支持文案与视频 provider 的端点/模型/鉴权联调测试。
 """
 
 from __future__ import annotations
@@ -12,55 +12,56 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from config import settings
+from services.provider_catalog import (
+    normalize_provider,
+    resolve_text_endpoint,
+    resolve_text_model,
+    resolve_video_endpoint,
+    resolve_video_model,
+)
 
 router = APIRouter()
 
 ApiTestType = Literal["text", "video"]
-DEFAULT_TEXT_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/responses"
-DEFAULT_VIDEO_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks"
 ARK_MODELS_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/models"
-DEFAULT_TEXT_MODEL = "ep-20260225204603-zcqr4"
-DEFAULT_VIDEO_MODEL = "ep-20260225204954-4sqgz"
 VIDEO_TEST_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/seepro_i2v.png"
 
 
 class TestKeyRequest(BaseModel):
     type: ApiTestType
     apiKey: str
+    provider: str = ""
+    apiEndpoint: str = ""
+    modelName: str = ""
 
 
-def get_ark_model(api_type: ApiTestType) -> str:
-    if api_type == "text":
-        return (
-            settings.ARK_TEXT_MODEL.strip()
-            or settings.ARK_MODEL.strip()
-            or DEFAULT_TEXT_MODEL
-        )
-    return (
-        settings.ARK_VIDEO_MODEL.strip()
-        or settings.ARK_MODEL.strip()
-        or DEFAULT_VIDEO_MODEL
-    )
-
-
-def get_test_endpoint(api_type: ApiTestType) -> str:
-    if api_type == "text":
-        return settings.ARK_TEXT_TEST_ENDPOINT.strip() or DEFAULT_TEXT_ENDPOINT
-    return settings.ARK_VIDEO_TEST_ENDPOINT.strip() or DEFAULT_VIDEO_ENDPOINT
+def extract_error_message(payload: object) -> str:
+    if isinstance(payload, dict):
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            for key in ("message", "detail", "reason"):
+                value = error_obj.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        for key in ("message", "detail", "reason"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(payload, str) and payload.strip():
+        return payload.strip()
+    return ""
 
 
 def build_request_payload(api_type: ApiTestType, model: str) -> dict:
     if api_type == "text":
         return {
             "model": model,
-            "max_output_tokens": 10,
-            "input": [
+            "messages": [
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "input_text",
+                            "type": "text",
                             "text": "Hi",
                         }
                     ],
@@ -123,7 +124,7 @@ async def probe_api_key_auth(api_key: str) -> dict:
         }
 
 
-async def probe_endpoint(api_type: ApiTestType, endpoint: str, api_key: str, model: str) -> dict:
+async def probe_endpoint(api_type: ApiTestType, provider: str, endpoint: str, api_key: str, model: str) -> dict:
     timeout = httpx.Timeout(30.0, connect=10.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -139,27 +140,30 @@ async def probe_endpoint(api_type: ApiTestType, endpoint: str, api_key: str, mod
         if response.status_code < 400:
             return {"ok": True, "endpoint": endpoint, "model": model, "status": response.status_code}
 
-        error_message = ""
         try:
             error_body = response.json()
-            if isinstance(error_body, dict):
-                error_obj = error_body.get("error")
-                if isinstance(error_obj, dict) and isinstance(error_obj.get("message"), str):
-                    error_message = error_obj["message"]
-                elif isinstance(error_body.get("message"), str):
-                    error_message = error_body["message"]
         except Exception:
-            error_message = ""
+            error_body = response.text
+        error_message = extract_error_message(error_body)
 
         if response.status_code == 400 and "model" in error_message.lower():
-            auth_probe = await probe_api_key_auth(api_key)
-            if auth_probe.get("ok"):
+            if provider in {"DOUBAO", "SEEDANCE"} or "ark.cn-beijing.volces.com" in endpoint:
+                auth_probe = await probe_api_key_auth(api_key)
+                if auth_probe.get("ok"):
+                    return {
+                        "ok": True,
+                        "endpoint": endpoint,
+                        "model": model,
+                        "status": response.status_code,
+                        "warning": f"API Key 可用，但当前模型不可用：{model}",
+                    }
+            else:
                 return {
-                    "ok": True,
+                    "ok": False,
                     "endpoint": endpoint,
                     "model": model,
                     "status": response.status_code,
-                    "warning": f"API Key 可用，但当前模型不可用：{model}",
+                    "reason": f"模型不可用: {model}",
                 }
             return {
                 "ok": False,
@@ -210,23 +214,29 @@ async def test_api_key(request: TestKeyRequest):
             content={"ok": False, "message": "参数错误：需要 type(text|video) 和 apiKey"},
         )
 
-    model = get_ark_model(request.type)
-    endpoint = get_test_endpoint(request.type)
+    provider = normalize_provider(request.provider, request.type)
+    if request.type == "text":
+        model = resolve_text_model(provider, request.modelName)
+        endpoint = resolve_text_endpoint(provider, request.apiEndpoint)
+    else:
+        model = resolve_video_model(provider, request.modelName)
+        endpoint = resolve_video_endpoint(provider, request.apiEndpoint)
+
     if not model:
         return JSONResponse(
-            status_code=500,
+            status_code=400,
             content={
                 "ok": False,
-                "message": f"未配置 {'ARK_TEXT_MODEL' if request.type == 'text' else 'ARK_VIDEO_MODEL'} 或 ARK_MODEL",
+                "message": "请先填写模型名称",
             },
         )
     if not endpoint:
         return JSONResponse(
-            status_code=500,
-            content={"ok": False, "message": "未配置可用的测试端点"},
+            status_code=400,
+            content={"ok": False, "message": "请先填写可用的 API 端点"},
         )
 
-    result = await probe_endpoint(request.type, endpoint, api_key, model)
+    result = await probe_endpoint(request.type, provider, endpoint, api_key, model)
     if result.get("ok"):
         warning = result.get("warning")
         message = (

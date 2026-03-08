@@ -8,6 +8,9 @@ type Step2Props = {
   onNext: () => void;
   step1Data: Step1FormData;
   textApiKey: string;
+  textProvider: string;
+  textApiEndpoint: string;
+  textModelName: string;
   scripts: GeneratedScript[];
   setScripts: React.Dispatch<React.SetStateAction<GeneratedScript[]>>;
 };
@@ -29,7 +32,16 @@ interface PromptTemplate {
   content: string;
 }
 
-export default function Step2({ onNext, step1Data, textApiKey, scripts, setScripts }: Step2Props) {
+export default function Step2({
+  onNext,
+  step1Data,
+  textApiKey,
+  textProvider,
+  textApiEndpoint,
+  textModelName,
+  scripts,
+  setScripts,
+}: Step2Props) {
   const [count, setCount] = useState(10);
   const [durationSeconds, setDurationSeconds] = useState(15);
   const [styles, setStyles] = useState<string[]>(['口语化', '煽动性']);
@@ -93,6 +105,9 @@ export default function Step2({ onNext, step1Data, textApiKey, scripts, setScrip
           },
           body: JSON.stringify({
             apiKey: textApiKey,
+            provider: textProvider,
+            apiEndpoint: textApiEndpoint,
+            modelName: textModelName,
             options: {
               count,
               durationSeconds,

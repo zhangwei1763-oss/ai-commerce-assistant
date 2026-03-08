@@ -40,7 +40,7 @@ class UserApiKey(Base):
 
     id = Column(String, primary_key=True)                    # key_001
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
-    provider = Column(String, nullable=False)                # GEMINI / DOUBAO / SEEDANCE
+    provider = Column(String, nullable=False)                # DOUBAO / SILICONFLOW / ALIYUN_BAILIAN / OPENAI / DEEPSEEK / SEEDANCE / ...
     api_key = Column(Text, nullable=False)                   # AES 加密存储
     api_endpoint = Column(String)                            # 可选自定义端点
     model_name = Column(String)                              # 可选模型名

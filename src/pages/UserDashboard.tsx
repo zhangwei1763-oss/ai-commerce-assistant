@@ -6,6 +6,11 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { userApi } from '../services/api';
+import {
+  getProviderDisplayName,
+  TEXT_PROVIDER_PRESETS,
+  VIDEO_PROVIDER_PRESETS,
+} from '../lib/providerCatalog';
 
 interface ApiKey {
   id: string;
@@ -111,16 +116,16 @@ export default function UserDashboard() {
     setModelName('');
   };
 
-  const providerNames: Record<string, string> = {
-    GEMINI: 'Gemini (Google)',
-    DOUBAO: '豆包 (火山引擎)',
-    SEEDANCE: 'Seedance (图生视频)',
-  };
-
   const providerColors: Record<string, string> = {
     GEMINI: 'bg-blue-100 text-blue-800',
     DOUBAO: 'bg-green-100 text-green-800',
+    SILICONFLOW: 'bg-cyan-100 text-cyan-800',
+    ALIYUN_BAILIAN: 'bg-orange-100 text-orange-800',
+    OPENAI: 'bg-emerald-100 text-emerald-800',
+    DEEPSEEK: 'bg-indigo-100 text-indigo-800',
+    CUSTOM_TEXT: 'bg-slate-100 text-slate-800',
     SEEDANCE: 'bg-purple-100 text-purple-800',
+    CUSTOM_VIDEO: 'bg-pink-100 text-pink-800',
   };
 
   return (
@@ -184,7 +189,7 @@ export default function UserDashboard() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`px-2 py-1 text-xs font-medium rounded ${providerColors[key.provider]}`}>
-                        {providerNames[key.provider] || key.provider}
+                        {getProviderDisplayName(key.provider)}
                       </span>
                       {key.is_active && (
                         <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-700 rounded">
@@ -243,9 +248,9 @@ export default function UserDashboard() {
                   onChange={(e) => setProvider(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 >
-                  <option value="DOUBAO">豆包 (火山引擎)</option>
-                  <option value="GEMINI">Gemini (Google)</option>
-                  <option value="SEEDANCE">Seedance (图生视频)</option>
+                  {[...TEXT_PROVIDER_PRESETS, ...VIDEO_PROVIDER_PRESETS].map((item) => (
+                    <option key={item.id} value={item.id}>{item.label}</option>
+                  ))}
                 </select>
               </div>
 

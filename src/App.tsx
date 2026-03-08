@@ -10,6 +10,13 @@ import SettingsModal from './components/SettingsModal';
 import PromptTemplateModal from './components/PromptTemplateModal';
 import { useAuth } from './contexts/AuthContext';
 import { userApi, type StoredApiKey } from './services/api';
+import {
+  getDefaultConfig,
+  isTextProvider,
+  isVideoProvider,
+  normalizeWorkflowConfig,
+  type WorkflowApiConfigDraft,
+} from './lib/providerCatalog';
 
 export type Step1FormData = {
   productName: string;
@@ -91,10 +98,32 @@ export default function App() {
     productImages: [],
   });
 
-  const textApiKey = storedTextApiKey?.api_key || '';
-  const videoApiKey = storedVideoApiKey?.api_key || '';
-  const videoApiEndpoint = storedVideoApiKey?.api_endpoint || '';
-  const videoModelName = storedVideoApiKey?.model_name || '';
+  const textConfig = normalizeWorkflowConfig({
+    provider: storedTextApiKey?.provider,
+    apiKey: storedTextApiKey?.api_key,
+    apiEndpoint: storedTextApiKey?.api_endpoint,
+    modelName: storedTextApiKey?.model_name,
+  }, 'text');
+  const videoConfig = normalizeWorkflowConfig({
+    provider: storedVideoApiKey?.provider,
+    apiKey: storedVideoApiKey?.api_key,
+    apiEndpoint: storedVideoApiKey?.api_endpoint,
+    modelName: storedVideoApiKey?.model_name,
+  }, 'video');
+
+  const textApiKey = textConfig.apiKey;
+  const textProvider = textConfig.provider;
+  const textApiEndpoint = textConfig.apiEndpoint;
+  const textModelName = textConfig.modelName;
+  const videoApiKey = videoConfig.apiKey;
+  const videoApiEndpoint = videoConfig.apiEndpoint;
+  const videoModelName = videoConfig.modelName;
+
+  const pickLatestKey = (keys: StoredApiKey[], matcher: (item: StoredApiKey) => boolean) => {
+    return keys
+      .filter(matcher)
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0] || null;
+  };
 
   useEffect(() => {
     const loadUserApiKeys = async () => {
@@ -106,10 +135,8 @@ export default function App() {
       }
 
       const keys = response.data as StoredApiKey[];
-      const nextTextKey = keys.find((item) => item.provider === 'DOUBAO')
-        || keys.find((item) => item.provider === 'GEMINI')
-        || null;
-      const nextVideoKey = keys.find((item) => item.provider === 'SEEDANCE') || null;
+      const nextTextKey = pickLatestKey(keys, (item) => isTextProvider(item.provider));
+      const nextVideoKey = pickLatestKey(keys, (item) => isVideoProvider(item.provider));
 
       setStoredTextApiKey(nextTextKey);
       setStoredVideoApiKey(nextVideoKey);
@@ -121,50 +148,62 @@ export default function App() {
   }, [user?.id]);
 
   const handleSaveApiKeys = async (nextKeys: {
-    textApiKey: string;
-    videoApiKey: string;
+    text: WorkflowApiConfigDraft;
+    video: WorkflowApiConfigDraft;
   }) => {
-    const normalizedTextKey = nextKeys.textApiKey.trim();
-    const normalizedVideoKey = nextKeys.videoApiKey.trim();
+    const normalizedText = normalizeWorkflowConfig(nextKeys.text, 'text');
+    const normalizedVideo = normalizeWorkflowConfig(nextKeys.video, 'video');
+    const normalizedTextKey = normalizedText.apiKey.trim();
+    const normalizedVideoKey = normalizedVideo.apiKey.trim();
+
+    const cleanupCategoryKeys = async (
+      keys: StoredApiKey[],
+      matcher: (item: StoredApiKey) => boolean,
+      keepProvider: string | null,
+    ) => {
+      for (const item of keys.filter(matcher)) {
+        if (keepProvider && item.provider === keepProvider) continue;
+        const response = await userApi.deleteApiKey(item.id);
+        if (!response.ok) {
+          throw new Error(response.message || `清理旧配置失败：${item.provider}`);
+        }
+      }
+    };
+
+    const currentKeysResponse = await userApi.listApiKeys();
+    if (!currentKeysResponse.ok || !Array.isArray(currentKeysResponse.data)) {
+      throw new Error(currentKeysResponse.message || '加载当前 API 配置失败');
+    }
+    const currentKeys = currentKeysResponse.data as StoredApiKey[];
 
     if (normalizedTextKey) {
       const response = await userApi.createApiKey({
-        provider: 'DOUBAO',
+        provider: normalizedText.provider,
         api_key: normalizedTextKey,
-        api_endpoint: storedTextApiKey?.api_endpoint || undefined,
-        model_name: storedTextApiKey?.model_name || undefined,
+        api_endpoint: normalizedText.apiEndpoint.trim() || undefined,
+        model_name: normalizedText.modelName.trim() || undefined,
       });
       if (!response.ok) {
         throw new Error(response.message || '文案 API Key 保存失败');
       }
-      if (storedTextApiKey?.id && storedTextApiKey.provider !== 'DOUBAO') {
-        const cleanupResponse = await userApi.deleteApiKey(storedTextApiKey.id);
-        if (!cleanupResponse.ok) {
-          throw new Error(cleanupResponse.message || '旧文案 API Key 清理失败');
-        }
-      }
-    } else if (storedTextApiKey?.id) {
-      const response = await userApi.deleteApiKey(storedTextApiKey.id);
-      if (!response.ok) {
-        throw new Error(response.message || '文案 API Key 删除失败');
-      }
+      await cleanupCategoryKeys(currentKeys, (item) => isTextProvider(item.provider), normalizedText.provider);
+    } else {
+      await cleanupCategoryKeys(currentKeys, (item) => isTextProvider(item.provider), null);
     }
 
     if (normalizedVideoKey) {
       const response = await userApi.createApiKey({
-        provider: 'SEEDANCE',
+        provider: normalizedVideo.provider,
         api_key: normalizedVideoKey,
-        api_endpoint: storedVideoApiKey?.api_endpoint || undefined,
-        model_name: storedVideoApiKey?.model_name || undefined,
+        api_endpoint: normalizedVideo.apiEndpoint.trim() || undefined,
+        model_name: normalizedVideo.modelName.trim() || undefined,
       });
       if (!response.ok) {
         throw new Error(response.message || '视频 API Key 保存失败');
       }
-    } else if (storedVideoApiKey?.id) {
-      const response = await userApi.deleteApiKey(storedVideoApiKey.id);
-      if (!response.ok) {
-        throw new Error(response.message || '视频 API Key 删除失败');
-      }
+      await cleanupCategoryKeys(currentKeys, (item) => isVideoProvider(item.provider), normalizedVideo.provider);
+    } else {
+      await cleanupCategoryKeys(currentKeys, (item) => isVideoProvider(item.provider), null);
     }
 
     const latestKeys = await userApi.listApiKeys();
@@ -173,8 +212,8 @@ export default function App() {
     }
 
     const keys = latestKeys.data as StoredApiKey[];
-    setStoredTextApiKey(keys.find((item) => item.provider === 'DOUBAO') || null);
-    setStoredVideoApiKey(keys.find((item) => item.provider === 'SEEDANCE') || null);
+    setStoredTextApiKey(pickLatestKey(keys, (item) => isTextProvider(item.provider)));
+    setStoredVideoApiKey(pickLatestKey(keys, (item) => isVideoProvider(item.provider)));
   };
 
   const handleNext = () => {
@@ -213,6 +252,9 @@ export default function App() {
             onNext={handleNext}
             step1Data={step1Data}
             textApiKey={textApiKey}
+            textProvider={textProvider}
+            textApiEndpoint={textApiEndpoint}
+            textModelName={textModelName}
             scripts={generatedScripts}
             setScripts={handleSetScripts}
           />
@@ -235,6 +277,9 @@ export default function App() {
           <Step5
             onNext={handleNext}
             textApiKey={textApiKey}
+            textProvider={textProvider}
+            textApiEndpoint={textApiEndpoint}
+            textModelName={textModelName}
             step1Data={step1Data}
             generatedScripts={generatedScripts}
             flowState={step4FlowState}
@@ -272,8 +317,22 @@ export default function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        textApiKey={textApiKey}
-        videoApiKey={videoApiKey}
+        textConfig={storedTextApiKey
+          ? {
+              provider: storedTextApiKey.provider,
+              apiKey: storedTextApiKey.api_key,
+              apiEndpoint: storedTextApiKey.api_endpoint,
+              modelName: storedTextApiKey.model_name,
+            }
+          : getDefaultConfig('text')}
+        videoConfig={storedVideoApiKey
+          ? {
+              provider: storedVideoApiKey.provider,
+              apiKey: storedVideoApiKey.api_key,
+              apiEndpoint: storedVideoApiKey.api_endpoint,
+              modelName: storedVideoApiKey.model_name,
+            }
+          : getDefaultConfig('video')}
         onSave={handleSaveApiKeys}
       />
       <PromptTemplateModal

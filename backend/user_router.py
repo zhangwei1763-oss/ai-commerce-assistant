@@ -31,7 +31,10 @@ def _normalize_prompt_template_fields(name: str, content: str) -> tuple[str, str
 # ---- 请求/响应模型 ----
 class CreateApiKeyRequest(BaseModel):
     """创建 API Key 请求"""
-    provider: str = Field(..., description="API 提供商：GEMINI, DOUBAO, SEEDANCE")
+    provider: str = Field(
+        ...,
+        description="API 提供商：DOUBAO / SILICONFLOW / ALIYUN_BAILIAN / OPENAI / DEEPSEEK / CUSTOM_TEXT / SEEDANCE / CUSTOM_VIDEO",
+    )
     api_key: str = Field(..., description="API Key")
     api_endpoint: str = Field("", description="API 端点（可选）")
     model_name: str = Field("", description="模型名称（可选）")

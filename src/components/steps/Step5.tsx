@@ -11,6 +11,9 @@ import { buildApiUrl } from '../../services/api';
 type Step5Props = {
   onNext: () => void;
   textApiKey: string;
+  textProvider: string;
+  textApiEndpoint: string;
+  textModelName: string;
   step1Data: Step1FormData;
   generatedScripts: GeneratedScript[];
   flowState: Step4FlowState;
@@ -29,6 +32,9 @@ function fileToDataUrl(file: File) {
 
 export default function Step5({
   textApiKey,
+  textProvider,
+  textApiEndpoint,
+  textModelName,
   step1Data,
   generatedScripts,
   flowState,
@@ -107,6 +113,9 @@ export default function Step5({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           apiKey: textApiKey,
+          provider: textProvider,
+          apiEndpoint: textApiEndpoint,
+          modelName: textModelName,
           videoUrl: videoUrl.trim(),
           step1Data: {
             productName: step1Data.productName,
@@ -152,6 +161,9 @@ export default function Step5({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           apiKey: textApiKey,
+          provider: textProvider,
+          apiEndpoint: textApiEndpoint,
+          modelName: textModelName,
           count: selectedCount,
           durationSeconds: selectedDuration,
           analysis,

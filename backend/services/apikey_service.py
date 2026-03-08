@@ -18,7 +18,17 @@ class ApiKeyService:
     """API Key 服务类"""
 
     # 支持的 API 提供商
-    VALID_PROVIDERS = ["GEMINI", "DOUBAO", "SEEDANCE"]
+    VALID_PROVIDERS = [
+        "GEMINI",
+        "DOUBAO",
+        "SILICONFLOW",
+        "ALIYUN_BAILIAN",
+        "OPENAI",
+        "DEEPSEEK",
+        "CUSTOM_TEXT",
+        "SEEDANCE",
+        "CUSTOM_VIDEO",
+    ]
 
     @staticmethod
     def create_api_key(
