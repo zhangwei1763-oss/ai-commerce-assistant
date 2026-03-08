@@ -1,8 +1,10 @@
-.env
-.venv
 __pycache__
+.pytest_cache
+.venv
+storage
 *.pyc
 *.pyo
 *.pyd
 *.db
-storage
+.env
+.env.prod

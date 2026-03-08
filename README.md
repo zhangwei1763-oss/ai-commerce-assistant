@@ -250,6 +250,20 @@ VITE_API_URL=https://your-backend-domain.com
 - `剪映草稿导出` 和旧版 `FFmpeg` 去重链路仍依赖本地临时文件，部署前要确认目标 Python 平台支持较长任务和临时文件写入
 - 如果要把历史 `storage/` 中的旧媒体一并搬到 Supabase，可直接使用 `backend/scripts/migrate_storage_to_supabase.py`
 
+## 国内服务器部署
+
+如果你的主要用户在国内，不建议优先走 `Vercel + Render` 这条链路。仓库里已经补了一套适合国内单机服务器的部署文件，优先看这份文档：
+
+- [DEPLOY_CN.md](/Users/liuyanbo/Downloads/报告/ai带货助手/DEPLOY_CN.md)
+- [DEPLOY_WINDOWS_TEST.md](/Users/liuyanbo/Downloads/报告/ai带货助手/DEPLOY_WINDOWS_TEST.md)
+
+这套方案的特点：
+
+- 前后端同域名访问
+- 使用 Docker Compose 一次拉起前端、后端、Postgres
+- 先用本地磁盘存媒体文件，部署难度最低
+- 更适合中国大陆服务器和国内用户访问
+
 ## 项目结构
 
 ```

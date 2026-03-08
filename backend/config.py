@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     EXPORT_DIR: str = "./storage/exports"
     TEMP_DIR: str = "./storage/tmp"
 
+    # ---- 前端静态资源托管（用于单进程部署，例如 Windows 测试环境） ----
+    SERVE_FRONTEND: bool = False
+    FRONTEND_DIST_DIR: str = "../dist"
+
     # ---- Supabase Storage ----
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
