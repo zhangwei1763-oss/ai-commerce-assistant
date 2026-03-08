@@ -111,6 +111,25 @@ def _frontend_enabled() -> bool:
     return settings.SERVE_FRONTEND and os.path.exists(_frontend_index_path())
 
 
+# ──────────────────────────────────────────────
+# 健康检查
+# ──────────────────────────────────────────────
+@app.get("/health", tags=["状态"])
+async def health():
+    return {"status": "ok"}
+
+
+if not _frontend_enabled():
+    @app.get("/", tags=["状态"])
+    async def root():
+        return {
+            "service": "AI带货助手 API",
+            "version": "1.0.0",
+            "status": "running",
+            "docs": "/docs"
+        }
+
+
 if _frontend_enabled():
     frontend_dist_dir = _frontend_dist_dir()
     frontend_assets_dir = os.path.join(frontend_dist_dir, "assets")
@@ -144,25 +163,6 @@ async def on_startup():
     """启动时自动初始化数据库和存储目录"""
     init_db()
     settings.init_storage_dirs()
-
-
-# ──────────────────────────────────────────────
-# 健康检查
-# ──────────────────────────────────────────────
-if not _frontend_enabled():
-    @app.get("/", tags=["状态"])
-    async def root():
-        return {
-            "service": "AI带货助手 API",
-            "version": "1.0.0",
-            "status": "running",
-            "docs": "/docs"
-        }
-
-
-@app.get("/health", tags=["状态"])
-async def health():
-    return {"status": "ok"}
 
 
 # ──────────────────────────────────────────────
