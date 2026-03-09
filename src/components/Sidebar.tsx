@@ -16,9 +16,17 @@ interface SidebarProps {
   completedSteps: number[];
   onOpenSettings: () => void;
   onOpenPromptTemplates: () => void;
+  onOpenAbout: () => void;
 }
 
-export default function Sidebar({ currentStep, setCurrentStep, completedSteps, onOpenSettings, onOpenPromptTemplates }: SidebarProps) {
+export default function Sidebar({
+  currentStep,
+  setCurrentStep,
+  completedSteps,
+  onOpenSettings,
+  onOpenPromptTemplates,
+  onOpenAbout,
+}: SidebarProps) {
   const { user } = useAuth();
   return (
     <div className="w-[240px] bg-white border-r border-gray-200 flex flex-col h-full shadow-sm z-10">
@@ -93,7 +101,11 @@ export default function Sidebar({ currentStep, setCurrentStep, completedSteps, o
           <Settings className="w-4 h-4 mr-2" />
           <span className="text-body">设置</span>
         </button>
-        <button className="w-full flex items-center px-4 py-2 text-text-sub hover:bg-gray-50 hover:text-text-main rounded transition-colors">
+        <button
+          type="button"
+          onClick={onOpenAbout}
+          className="w-full flex items-center px-4 py-2 text-text-sub hover:bg-gray-50 hover:text-text-main rounded transition-colors"
+        >
           <Info className="w-4 h-4 mr-2" />
           <span className="text-body">关于</span>
         </button>

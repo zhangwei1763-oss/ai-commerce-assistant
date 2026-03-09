@@ -8,6 +8,7 @@ import Step3 from './components/steps/Step3';
 import Step5 from './components/steps/Step5';
 import SettingsModal from './components/SettingsModal';
 import PromptTemplateModal from './components/PromptTemplateModal';
+import AboutModal from './components/AboutModal';
 import { useAuth } from './contexts/AuthContext';
 import { userApi, type StoredApiKey } from './services/api';
 import {
@@ -79,6 +80,7 @@ export default function App() {
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPromptTemplatesOpen, setIsPromptTemplatesOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [storedTextApiKey, setStoredTextApiKey] = useState<StoredApiKey | null>(null);
   const [storedVideoApiKey, setStoredVideoApiKey] = useState<StoredApiKey | null>(null);
   const [step1Data, setStep1Data] = useState<Step1FormData>({
@@ -124,6 +126,10 @@ export default function App() {
       .filter(matcher)
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0] || null;
   };
+
+  useEffect(() => {
+    document.title = 'AI带货助手';
+  }, []);
 
   useEffect(() => {
     const loadUserApiKeys = async () => {
@@ -306,6 +312,7 @@ export default function App() {
         completedSteps={completedSteps}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenPromptTemplates={() => setIsPromptTemplatesOpen(true)}
+        onOpenAbout={() => setIsAboutOpen(true)}
       />
       <div className="flex flex-col flex-1 min-w-0">
         <TopBar currentStep={currentStep} />
@@ -338,6 +345,10 @@ export default function App() {
       <PromptTemplateModal
         isOpen={isPromptTemplatesOpen}
         onClose={() => setIsPromptTemplatesOpen(false)}
+      />
+      <AboutModal
+        isOpen={isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
       />
     </div>
   );

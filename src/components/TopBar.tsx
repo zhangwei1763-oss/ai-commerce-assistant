@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, RefreshCw, HelpCircle, ChevronRight, LogOut } from 'lucide-react';
+import { RefreshCw, ChevronRight, LogOut } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const stepTitles = [
@@ -22,17 +22,13 @@ export default function TopBar({ currentStep }: { currentStep: number }) {
 
       <div className="flex items-center space-x-2">
         <span className="text-sm text-gray-500 max-w-[220px] truncate">{user?.email}</span>
-        <button className="flex items-center px-3 py-1.5 text-text-sub hover:bg-gray-100 rounded transition-colors">
-          <Download className="w-4 h-4 mr-1.5" />
-          <span>导出</span>
-        </button>
-        <button className="flex items-center px-3 py-1.5 text-text-sub hover:bg-gray-100 rounded transition-colors">
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="flex items-center px-3 py-1.5 text-text-sub hover:bg-gray-100 rounded transition-colors"
+        >
           <RefreshCw className="w-4 h-4 mr-1.5" />
           <span>刷新</span>
-        </button>
-        <button className="flex items-center px-3 py-1.5 text-text-sub hover:bg-gray-100 rounded transition-colors">
-          <HelpCircle className="w-4 h-4 mr-1.5" />
-          <span>帮助</span>
         </button>
         <button
           type="button"
