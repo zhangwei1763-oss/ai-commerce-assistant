@@ -28,6 +28,8 @@ class ApiKeyService:
         "CUSTOM_TEXT",
         "SEEDANCE",
         "CUSTOM_VIDEO",
+        "SEEDREAM",
+        "CUSTOM_IMAGE",
     ]
 
     @staticmethod

@@ -14,6 +14,8 @@ from pydantic import BaseModel
 
 from services.provider_catalog import (
     normalize_provider,
+    resolve_image_endpoint,
+    resolve_image_model,
     resolve_text_endpoint,
     resolve_text_model,
     resolve_video_endpoint,
@@ -22,7 +24,7 @@ from services.provider_catalog import (
 
 router = APIRouter()
 
-ApiTestType = Literal["text", "video"]
+ApiTestType = Literal["text", "video", "image"]
 ARK_MODELS_ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/models"
 VIDEO_TEST_IMAGE_URL = "https://ark-project.tos-cn-beijing.volces.com/doc_image/seepro_i2v.png"
 
@@ -67,6 +69,14 @@ def build_request_payload(api_type: ApiTestType, model: str) -> dict:
                     ],
                 }
             ],
+        }
+
+    if api_type == "image":
+        return {
+            "model": model,
+            "prompt": "一个站在直播间里的电商主播形象，半身，写实风格",
+            "n": 1,
+            "response_format": "url",
         }
 
     return {
@@ -146,7 +156,7 @@ async def probe_endpoint(api_type: ApiTestType, provider: str, endpoint: str, ap
             error_body = response.text
         error_message = extract_error_message(error_body)
 
-        if response.status_code == 400 and "model" in error_message.lower():
+        if response.status_code == 400 and ("model" in error_message.lower() or "image size" in error_message.lower()):
             if provider in {"DOUBAO", "SEEDANCE"} or "ark.cn-beijing.volces.com" in endpoint:
                 auth_probe = await probe_api_key_auth(api_key)
                 if auth_probe.get("ok"):
@@ -155,7 +165,11 @@ async def probe_endpoint(api_type: ApiTestType, provider: str, endpoint: str, ap
                         "endpoint": endpoint,
                         "model": model,
                         "status": response.status_code,
-                        "warning": f"API Key 可用，但当前模型不可用：{model}",
+                        "warning": (
+                            f"API Key 可用，但当前模型不可用：{model}"
+                            if "model" in error_message.lower()
+                            else "API Key 可用，但测试参数与当前图片模型要求不完全匹配"
+                        ),
                     }
             else:
                 return {
@@ -211,13 +225,16 @@ async def test_api_key(request: TestKeyRequest):
     if not api_key:
         return JSONResponse(
             status_code=400,
-            content={"ok": False, "message": "参数错误：需要 type(text|video) 和 apiKey"},
+            content={"ok": False, "message": "参数错误：需要 type(text|video|image) 和 apiKey"},
         )
 
     provider = normalize_provider(request.provider, request.type)
     if request.type == "text":
         model = resolve_text_model(provider, request.modelName)
         endpoint = resolve_text_endpoint(provider, request.apiEndpoint)
+    elif request.type == "image":
+        model = resolve_image_model(provider, request.modelName)
+        endpoint = resolve_image_endpoint(provider, request.apiEndpoint)
     else:
         model = resolve_video_model(provider, request.modelName)
         endpoint = resolve_video_endpoint(provider, request.apiEndpoint)
@@ -256,11 +273,25 @@ async def test_api_key(request: TestKeyRequest):
             },
         )
 
+    reason = str(result.get("reason") or "").strip()
+    endpoint_hint = str(result.get("endpoint") or endpoint).strip()
+    model_hint = str(result.get("model") or model).strip()
+    message = "连接失败：未能连通测试端点"
+    if reason:
+        message = f"连接失败：{reason}"
+        if "certificate verify failed" in reason.lower():
+            message += "。这通常是本机证书链或网络代理问题"
+    if endpoint_hint:
+        message += f"（{endpoint_hint}"
+        if model_hint:
+            message += f" / {model_hint}"
+        message += "）"
+
     return JSONResponse(
         status_code=502,
         content={
             "ok": False,
-            "message": "连接失败：未能连通测试端点",
+            "message": message,
             "details": [result],
         },
     )

@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     SEEDANCE_API_KEY: str = "your_seedance_api_key"
     SEEDANCE_API_URL: str = "https://api.seedance.com/v1"
 
+    # ---- Seedream 图片生成配置 ----
+    SEEDREAM_API_KEY: str = ""
+    SEEDREAM_API_URL: str = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+    SEEDREAM_MODEL: str = ""
+
     # ---- 文件存储路径 ----
     STORAGE_BACKEND: str = "local"
     STORAGE_PUBLIC_BASE_URL: str = ""

@@ -4,6 +4,7 @@
 """
 
 from datetime import datetime
+import uuid
 from sqlalchemy import Column, String, Integer, Text, DateTime, Boolean, ForeignKey
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -32,6 +33,8 @@ class User(Base):
     scripts = relationship("Script", back_populates="user", cascade="all, delete-orphan")
     videos = relationship("Video", back_populates="user", cascade="all, delete-orphan")
     viral_analyses = relationship("ViralAnalysis", back_populates="user", cascade="all, delete-orphan")
+    characters = relationship("CharacterImage", back_populates="user", cascade="all, delete-orphan")
+    character_groups = relationship("CharacterGroup", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserApiKey(Base):
@@ -116,6 +119,7 @@ class Script(Base):
     id = Column(String, primary_key=True)                    # script_001
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     product_id = Column(String, nullable=False)
+    character_id = Column(String, ForeignKey("character_images.id"), nullable=True, index=True)
     script_type = Column(String, default="normal")
     hook_type = Column(String)
     audience = Column(String)
@@ -130,6 +134,7 @@ class Script(Base):
 
     # 关系
     user = relationship("User", back_populates="scripts")
+    character = relationship("CharacterImage", back_populates="scripts")
 
 
 class Video(Base):
@@ -171,3 +176,41 @@ class ViralAnalysis(Base):
 
     # 关系
     user = relationship("User", back_populates="viral_analyses")
+
+
+class CharacterImage(Base):
+    """人物图片表"""
+    __tablename__ = "character_images"
+
+    id = Column(String, primary_key=True, default=lambda: f"char_{uuid.uuid4().hex[:8]}")
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    group_name = Column(String(100))
+    description = Column(Text)
+    style_preset = Column(String(50))
+    prompt_text = Column(Text)
+    image_storage_key = Column(String(500), nullable=False)
+    image_public_url = Column(String(500))
+    image_width = Column(Integer)
+    image_height = Column(Integer)
+    file_size = Column(Integer)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="characters")
+    scripts = relationship("Script", back_populates="character")
+
+
+class CharacterGroup(Base):
+    """人物图片分组表"""
+    __tablename__ = "character_groups"
+
+    id = Column(String, primary_key=True, default=lambda: f"cgrp_{uuid.uuid4().hex[:8]}")
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="character_groups")

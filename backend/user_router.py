@@ -33,7 +33,7 @@ class CreateApiKeyRequest(BaseModel):
     """创建 API Key 请求"""
     provider: str = Field(
         ...,
-        description="API 提供商：DOUBAO / SILICONFLOW / ALIYUN_BAILIAN / OPENAI / DEEPSEEK / CUSTOM_TEXT / SEEDANCE / CUSTOM_VIDEO",
+        description="API 提供商：DOUBAO / SILICONFLOW / ALIYUN_BAILIAN / OPENAI / DEEPSEEK / CUSTOM_TEXT / SEEDANCE / CUSTOM_VIDEO / SEEDREAM / CUSTOM_IMAGE",
     )
     api_key: str = Field(..., description="API Key")
     api_endpoint: str = Field("", description="API 端点（可选）")

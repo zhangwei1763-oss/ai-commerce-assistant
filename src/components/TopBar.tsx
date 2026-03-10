@@ -9,7 +9,13 @@ const stepTitles = [
   '数据回流进化'
 ];
 
-export default function TopBar({ currentStep }: { currentStep: number }) {
+export default function TopBar({
+  currentStep,
+  title,
+}: {
+  currentStep: number;
+  title?: string;
+}) {
   const { user, logout } = useAuth();
 
   return (
@@ -17,7 +23,7 @@ export default function TopBar({ currentStep }: { currentStep: number }) {
       <div className="flex items-center text-text-sub text-body">
         <span>工作台</span>
         <ChevronRight className="w-4 h-4 mx-2" />
-        <span className="text-text-main font-semibold">{stepTitles[currentStep - 1]}</span>
+        <span className="text-text-main font-semibold">{title || stepTitles[currentStep - 1]}</span>
       </div>
 
       <div className="flex items-center space-x-2">

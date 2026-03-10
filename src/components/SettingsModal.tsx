@@ -3,6 +3,7 @@ import { X, CheckCircle2, XCircle, Loader2, RotateCcw } from 'lucide-react';
 import { buildApiUrl } from '../services/api';
 import {
   getProviderPreset,
+  IMAGE_PROVIDER_PRESETS,
   normalizeWorkflowConfig,
   TEXT_PROVIDER_PRESETS,
   VIDEO_PROVIDER_PRESETS,
@@ -16,9 +17,11 @@ interface SettingsModalProps {
   onClose: () => void;
   textConfig: WorkflowApiConfigDraft;
   videoConfig: WorkflowApiConfigDraft;
+  imageConfig: WorkflowApiConfigDraft;
   onSave: (payload: {
     text: WorkflowApiConfigDraft;
     video: WorkflowApiConfigDraft;
+    image: WorkflowApiConfigDraft;
   }) => Promise<void>;
 }
 
@@ -70,7 +73,11 @@ function ApiConfigCard({
   onResetToPreset: () => void;
   onTest: () => Promise<void>;
 }) {
-  const presets = capability === 'text' ? TEXT_PROVIDER_PRESETS : VIDEO_PROVIDER_PRESETS;
+  const presets = capability === 'text'
+    ? TEXT_PROVIDER_PRESETS
+    : capability === 'video'
+      ? VIDEO_PROVIDER_PRESETS
+      : IMAGE_PROVIDER_PRESETS;
   const preset = getProviderPreset(draft.provider, capability) || presets[0];
 
   const updateDraft = (patch: Partial<WorkflowApiConfigDraft>) => {
@@ -79,11 +86,11 @@ function ApiConfigCard({
 
   const applyProvider = (nextProvider: string) => {
     const nextPreset = getProviderPreset(nextProvider, capability) || presets[0];
-    updateDraft({
-      provider: nextPreset.id,
-      apiEndpoint: nextPreset.recommendedEndpoint,
-      modelName: nextPreset.id === 'DOUBAO' ? '' : nextPreset.modelSuggestions[0] || '',
-    });
+      updateDraft({
+        provider: nextPreset.id,
+        apiEndpoint: nextPreset.recommendedEndpoint,
+        modelName: capability === 'text' && nextPreset.id === 'DOUBAO' ? '' : nextPreset.modelSuggestions[0] || '',
+      });
   };
 
   return (
@@ -220,12 +227,15 @@ export default function SettingsModal({
   onClose,
   textConfig,
   videoConfig,
+  imageConfig,
   onSave,
 }: SettingsModalProps) {
   const [draftTextConfig, setDraftTextConfig] = useState(() => normalizeWorkflowConfig(textConfig, 'text'));
   const [draftVideoConfig, setDraftVideoConfig] = useState(() => normalizeWorkflowConfig(videoConfig, 'video'));
+  const [draftImageConfig, setDraftImageConfig] = useState(() => normalizeWorkflowConfig(imageConfig, 'image'));
   const [textStatus, setTextStatus] = useState<ApiCardStatus>({ status: 'idle', message: '' });
   const [videoStatus, setVideoStatus] = useState<ApiCardStatus>({ status: 'idle', message: '' });
+  const [imageStatus, setImageStatus] = useState<ApiCardStatus>({ status: 'idle', message: '' });
   const [saveMessage, setSaveMessage] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
@@ -233,11 +243,13 @@ export default function SettingsModal({
     if (!isOpen) return;
     setDraftTextConfig(normalizeWorkflowConfig(textConfig, 'text'));
     setDraftVideoConfig(normalizeWorkflowConfig(videoConfig, 'video'));
+    setDraftImageConfig(normalizeWorkflowConfig(imageConfig, 'image'));
     setTextStatus({ status: 'idle', message: '' });
     setVideoStatus({ status: 'idle', message: '' });
+    setImageStatus({ status: 'idle', message: '' });
     setSaveMessage('');
     setSaveStatus('idle');
-  }, [isOpen, textConfig, videoConfig]);
+  }, [imageConfig, isOpen, textConfig, videoConfig]);
 
   if (!isOpen) return null;
 
@@ -265,8 +277,11 @@ export default function SettingsModal({
       const result = contentType.includes('application/json')
         ? JSON.parse(rawText || '{}')
         : { ok: false, message: rawText || '服务端返回非 JSON 响应' };
+      const detailReason = Array.isArray(result?.details) && result.details[0]?.reason
+        ? String(result.details[0].reason)
+        : '';
       if (!response.ok || !result?.ok) {
-        throw new Error(result?.message || '连接测试失败');
+        throw new Error(result?.message || detailReason || '连接测试失败');
       }
       return result?.message || '连接成功';
     } catch (error) {
@@ -281,11 +296,12 @@ export default function SettingsModal({
 
   const validateConfig = (draft: WorkflowApiConfigDraft, capability: ApiCapability) => {
     if (!draft.apiKey.trim()) return;
+    const label = capability === 'text' ? '文案' : capability === 'video' ? '视频' : '生图';
     if (!draft.modelName.trim()) {
-      throw new Error(`${capability === 'text' ? '文案' : '视频'}模型名称不能为空`);
+      throw new Error(`${label}模型名称不能为空`);
     }
     if (!draft.apiEndpoint.trim()) {
-      throw new Error(`${capability === 'text' ? '文案' : '视频'} API 端点不能为空`);
+      throw new Error(`${label} API 端点不能为空`);
     }
   };
 
@@ -311,15 +327,28 @@ export default function SettingsModal({
     }
   };
 
+  const testImageApi = async () => {
+    setImageStatus({ status: 'testing', message: '' });
+    try {
+      validateConfig(draftImageConfig, 'image');
+      const message = await runApiKeyTest('image', draftImageConfig);
+      setImageStatus({ status: 'success', message });
+    } catch (error) {
+      setImageStatus({ status: 'error', message: error instanceof Error ? error.message : '连接测试失败' });
+    }
+  };
+
   const handleSave = async () => {
     setSaveStatus('saving');
     setSaveMessage('');
     try {
       validateConfig(draftTextConfig, 'text');
       validateConfig(draftVideoConfig, 'video');
+      validateConfig(draftImageConfig, 'image');
       await onSave({
         text: normalizeWorkflowConfig(draftTextConfig, 'text'),
         video: normalizeWorkflowConfig(draftVideoConfig, 'video'),
+        image: normalizeWorkflowConfig(draftImageConfig, 'image'),
       });
       setSaveStatus('success');
       setSaveMessage('已保存到数据库，下次登录会自动加载当前提供商和模型配置');
@@ -384,12 +413,25 @@ export default function SettingsModal({
               onResetToPreset={() => resetPreset('video', draftVideoConfig.provider)}
               onTest={testVideoApi}
             />
+            <ApiConfigCard
+              title="人物图 生图模型"
+              capability="image"
+              draft={draftImageConfig}
+              status={imageStatus}
+              onDraftChange={(nextDraft) => {
+                setDraftImageConfig(nextDraft);
+                setImageStatus({ status: 'idle', message: '' });
+              }}
+              onResetToPreset={() => resetPreset('image', draftImageConfig.provider)}
+              onTest={testImageApi}
+            />
           </div>
 
           <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-700 leading-5">
             当前建议：
             文案优先选择 OpenAI 兼容文本接口；如果你会传参考图片，请尽量选支持视觉的模型。
             视频当前最稳的是火山方舟 Seedance；其他视频服务只有在它兼容“异步建任务 + taskId 查状态”时才能直接接入。
+            人物图建议单独配置 Seedream 或兼容的 images/generations 网关，避免和文案 / 视频模型混用。
           </div>
 
           {saveStatus === 'error' && (

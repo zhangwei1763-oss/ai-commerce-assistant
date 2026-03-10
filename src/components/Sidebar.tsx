@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Settings, Info, Check, Video, FileText, Shield } from 'lucide-react';
+import { Settings, Info, Check, Video, FileText, Shield, Users } from 'lucide-react';
 
 const steps = [
   { id: 1, title: '构建AI大脑', desc: '定身份+喂产品' },
@@ -14,6 +14,8 @@ interface SidebarProps {
   currentStep: number;
   setCurrentStep: (step: number) => void;
   completedSteps: number[];
+  activeView?: 'workflow' | 'characters';
+  onOpenCharacters: () => void;
   onOpenSettings: () => void;
   onOpenPromptTemplates: () => void;
   onOpenAbout: () => void;
@@ -23,6 +25,8 @@ export default function Sidebar({
   currentStep,
   setCurrentStep,
   completedSteps,
+  activeView = 'workflow',
+  onOpenCharacters,
   onOpenSettings,
   onOpenPromptTemplates,
   onOpenAbout,
@@ -47,17 +51,17 @@ export default function Sidebar({
               key={step.id}
               onClick={() => setCurrentStep(step.id)}
               className={`relative flex items-center px-4 py-3 cursor-pointer transition-colors ${
-                isSelected ? 'bg-[#E5F3FF]' : 'hover:bg-gray-50'
+                activeView === 'workflow' && isSelected ? 'bg-[#E5F3FF]' : 'hover:bg-gray-50'
               }`}
             >
-              {isSelected && (
+              {activeView === 'workflow' && isSelected && (
                 <div className="absolute left-0 top-0 bottom-0 w-1 bg-accent"></div>
               )}
 
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs mr-3 flex-shrink-0 ${
                 isCompleted
                   ? 'bg-success text-white'
-                  : isSelected
+                  : activeView === 'workflow' && isSelected
                     ? 'bg-accent text-white'
                     : 'bg-gray-200 text-gray-600'
               }`}>
@@ -65,7 +69,7 @@ export default function Sidebar({
               </div>
 
               <div className="flex flex-col">
-                <span className={`text-body font-semibold ${isSelected ? 'text-accent' : 'text-text-main'}`}>
+                <span className={`text-body font-semibold ${activeView === 'workflow' && isSelected ? 'text-accent' : 'text-text-main'}`}>
                   {step.title}
                 </span>
                 <span className="text-[11px] text-text-sub mt-0.5">
@@ -78,6 +82,18 @@ export default function Sidebar({
       </div>
 
       <div className="border-t border-gray-100 p-2">
+        <button
+          type="button"
+          onClick={onOpenCharacters}
+          className={`w-full flex items-center px-4 py-2 rounded transition-colors ${
+            activeView === 'characters'
+              ? 'bg-[#E5F3FF] text-accent'
+              : 'text-text-sub hover:bg-gray-50 hover:text-text-main'
+          }`}
+        >
+          <Users className="w-4 h-4 mr-2" />
+          <span className="text-body">人物管理</span>
+        </button>
         {user?.is_admin && (
           <Link
             to="/admin"

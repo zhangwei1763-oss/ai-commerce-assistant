@@ -1,4 +1,4 @@
-export type ApiCapability = 'text' | 'video';
+export type ApiCapability = 'text' | 'video' | 'image';
 
 export type ProviderPreset = {
   id: string;
@@ -135,6 +135,35 @@ export const VIDEO_PROVIDER_PRESETS: ProviderPreset[] = [
   },
 ];
 
+export const IMAGE_PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'SEEDREAM',
+    capability: 'image',
+    label: '火山方舟 Seedream',
+    shortLabel: 'Seedream',
+    description: '适合电商人物图生成。建议填写完整图片生成端点和已开通的模型名。',
+    recommendedEndpoint: 'https://ark.cn-beijing.volces.com/api/v3/images/generations',
+    endpointPlaceholder: 'https://ark.cn-beijing.volces.com/api/v3/images/generations',
+    modelPlaceholder: '填写你的 Seedream 模型名称',
+    keyPlaceholder: '输入图片生成 API Key',
+    helpText: '图片生成按 OpenAI Images 兼容协议调用。若你使用火山方舟，请填写对应图片模型名称；如果你的接入方式不同，也可以改成自定义端点。',
+    modelSuggestions: [],
+  },
+  {
+    id: 'CUSTOM_IMAGE',
+    capability: 'image',
+    label: '自定义生图网关',
+    shortLabel: '自定义',
+    description: '适合兼容 images/generations 协议的第三方图片服务。',
+    recommendedEndpoint: '',
+    endpointPlaceholder: 'https://your-image-provider.example.com/v1/images/generations',
+    modelPlaceholder: '填写该图片服务支持的模型名',
+    keyPlaceholder: '输入该图片服务 API Key',
+    helpText: '这里请填写完整图片生成 URL。服务端会按 prompt / n / size / response_format=url 的格式调用。',
+    modelSuggestions: [],
+  },
+];
+
 export const LEGACY_PROVIDER_META: Record<string, Pick<ProviderPreset, 'label' | 'shortLabel'>> = {
   GEMINI: {
     label: 'Gemini (旧配置)',
@@ -148,6 +177,7 @@ export const TEXT_PROVIDER_IDS = new Set([
 ]);
 
 export const VIDEO_PROVIDER_IDS = new Set(VIDEO_PROVIDER_PRESETS.map((item) => item.id));
+export const IMAGE_PROVIDER_IDS = new Set(IMAGE_PROVIDER_PRESETS.map((item) => item.id));
 
 export function isTextProvider(provider?: string | null) {
   return TEXT_PROVIDER_IDS.has((provider || '').toUpperCase());
@@ -157,13 +187,19 @@ export function isVideoProvider(provider?: string | null) {
   return VIDEO_PROVIDER_IDS.has((provider || '').toUpperCase());
 }
 
+export function isImageProvider(provider?: string | null) {
+  return IMAGE_PROVIDER_IDS.has((provider || '').toUpperCase());
+}
+
 export function getProviderPreset(provider?: string | null, capability?: ApiCapability) {
   const normalized = (provider || '').toUpperCase();
   const pool = capability === 'video'
     ? VIDEO_PROVIDER_PRESETS
     : capability === 'text'
       ? TEXT_PROVIDER_PRESETS
-      : [...TEXT_PROVIDER_PRESETS, ...VIDEO_PROVIDER_PRESETS];
+      : capability === 'image'
+        ? IMAGE_PROVIDER_PRESETS
+        : [...TEXT_PROVIDER_PRESETS, ...VIDEO_PROVIDER_PRESETS, ...IMAGE_PROVIDER_PRESETS];
   return pool.find((item) => item.id === normalized) || null;
 }
 
@@ -175,7 +211,11 @@ export function getProviderDisplayName(provider?: string | null) {
 }
 
 export function getDefaultConfig(capability: ApiCapability): WorkflowApiConfigDraft {
-  const preset = capability === 'text' ? TEXT_PROVIDER_PRESETS[0] : VIDEO_PROVIDER_PRESETS[0];
+  const preset = capability === 'text'
+    ? TEXT_PROVIDER_PRESETS[0]
+    : capability === 'video'
+      ? VIDEO_PROVIDER_PRESETS[0]
+      : IMAGE_PROVIDER_PRESETS[0];
   return {
     provider: preset.id,
     apiKey: '',
@@ -197,6 +237,6 @@ export function normalizeWorkflowConfig(
     provider: preset.id,
     apiKey: value?.apiKey || '',
     apiEndpoint: value?.apiEndpoint || preset.recommendedEndpoint,
-    modelName: value?.modelName || (preset.id === 'DOUBAO' ? '' : preset.modelSuggestions[0] || ''),
+    modelName: value?.modelName || (capability === 'text' && preset.id === 'DOUBAO' ? '' : preset.modelSuggestions[0] || ''),
   };
 }

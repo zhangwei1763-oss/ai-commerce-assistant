@@ -11,6 +11,11 @@ export function buildApiUrl(endpoint: string) {
   return `${API_BASE_URL}${normalizedEndpoint}`;
 }
 
+export function resolveAssetUrl(value: string) {
+  if (!value) return value;
+  return /^https?:\/\//.test(value) ? value : buildApiUrl(value);
+}
+
 // 内部 token 存储
 let _accessToken: string | null = null;
 
@@ -59,6 +64,37 @@ export interface PromptTemplateRecord {
   updated_at: string;
 }
 
+export interface CharacterRecord {
+  id: string;
+  name: string;
+  group_name: string;
+  description: string;
+  style_preset: string;
+  prompt_text: string;
+  image_storage_key: string;
+  image_public_url: string;
+  image_width?: number | null;
+  image_height?: number | null;
+  file_size?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CharacterListPayload {
+  items: CharacterRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CharacterGroupRecord {
+  id: string;
+  name: string;
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AdminUserRecord {
   id: string;
   email: string;
@@ -83,11 +119,15 @@ async function request<T>(
 ): Promise<ApiResponse<T>> {
   const url = buildApiUrl(endpoint);
   const token = getAccessToken();
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
   const headers: HeadersInit = {
-    'Content-Type': 'application/json',
     ...options.headers,
   };
+
+  if (!isFormData && !('Content-Type' in headers)) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -206,6 +246,108 @@ export const userApi = {
 
   deletePromptTemplate: async (templateId: string) => {
     return request(`/api/user/prompt-templates/${templateId}`, {
+      method: 'DELETE',
+    });
+  },
+};
+
+export const characterApi = {
+  list: async (params?: { limit?: number; offset?: number }) => {
+    const searchParams = new URLSearchParams();
+    if (typeof params?.limit === 'number') searchParams.set('limit', String(params.limit));
+    if (typeof params?.offset === 'number') searchParams.set('offset', String(params.offset));
+    const query = searchParams.toString();
+    return request<CharacterListPayload>(`/api/characters${query ? `?${query}` : ''}`);
+  },
+
+  get: async (characterId: string) => {
+    return request<CharacterRecord>(`/api/characters/${characterId}`);
+  },
+
+  listGroups: async () => {
+    return request<CharacterGroupRecord[]>('/api/characters/groups');
+  },
+
+  createGroup: async (data: { name: string }) => {
+    return request<CharacterGroupRecord>('/api/characters/groups', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteGroup: async (groupId: string) => {
+    return request<{ ok: boolean; affected: number }>(`/api/characters/groups/${groupId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  generate: async (data: {
+    apiKey: string;
+    provider?: string;
+    apiEndpoint?: string;
+    modelName?: string;
+    stylePreset: string;
+    customPrompt: string;
+    count: number;
+    size?: string;
+  }) => {
+    return request<{
+      ok: boolean;
+      prompt: string;
+      stylePreset: string;
+      images: Array<{
+        storage_key: string;
+        public_url: string;
+        revised_prompt?: string;
+        file_size?: number | null;
+        image_width?: number | null;
+        image_height?: number | null;
+      }>;
+    }>('/api/characters/generate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  save: async (data: {
+    name: string;
+    groupName?: string;
+    description?: string;
+    stylePreset?: string;
+    promptText?: string;
+    imageStorageKey: string;
+    imagePublicUrl: string;
+    fileSize?: number | null;
+    imageWidth?: number | null;
+    imageHeight?: number | null;
+  }) => {
+    return request<CharacterRecord>('/api/characters/save', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  upload: async (data: { file: File; name: string; groupName?: string; description?: string }) => {
+    const formData = new FormData();
+    formData.append('file', data.file);
+    formData.append('name', data.name);
+    if (data.groupName) formData.append('groupName', data.groupName);
+    if (data.description) formData.append('description', data.description);
+    return request<CharacterRecord>('/api/characters/upload', {
+      method: 'POST',
+      body: formData,
+    });
+  },
+
+  update: async (characterId: string, data: { name: string; groupName?: string; description?: string }) => {
+    return request<CharacterRecord>(`/api/characters/${characterId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  delete: async (characterId: string) => {
+    return request<{ ok: boolean }>(`/api/characters/${characterId}`, {
       method: 'DELETE',
     });
   },

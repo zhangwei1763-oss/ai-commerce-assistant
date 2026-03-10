@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import StatusBar from './components/StatusBar';
@@ -9,10 +10,12 @@ import Step5 from './components/steps/Step5';
 import SettingsModal from './components/SettingsModal';
 import PromptTemplateModal from './components/PromptTemplateModal';
 import AboutModal from './components/AboutModal';
+import CharacterManagement from './pages/CharacterManagement';
 import { useAuth } from './contexts/AuthContext';
 import { userApi, type StoredApiKey } from './services/api';
 import {
   getDefaultConfig,
+  isImageProvider,
   isTextProvider,
   isVideoProvider,
   normalizeWorkflowConfig,
@@ -76,6 +79,8 @@ export type Step4FlowState = {
 
 export default function App() {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -83,6 +88,7 @@ export default function App() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [storedTextApiKey, setStoredTextApiKey] = useState<StoredApiKey | null>(null);
   const [storedVideoApiKey, setStoredVideoApiKey] = useState<StoredApiKey | null>(null);
+  const [storedImageApiKey, setStoredImageApiKey] = useState<StoredApiKey | null>(null);
   const [step1Data, setStep1Data] = useState<Step1FormData>({
     productName: '',
     coreSellingPoints: '',
@@ -112,6 +118,12 @@ export default function App() {
     apiEndpoint: storedVideoApiKey?.api_endpoint,
     modelName: storedVideoApiKey?.model_name,
   }, 'video');
+  const imageConfig = normalizeWorkflowConfig({
+    provider: storedImageApiKey?.provider,
+    apiKey: storedImageApiKey?.api_key,
+    apiEndpoint: storedImageApiKey?.api_endpoint,
+    modelName: storedImageApiKey?.model_name,
+  }, 'image');
 
   const textApiKey = textConfig.apiKey;
   const textProvider = textConfig.provider;
@@ -120,6 +132,7 @@ export default function App() {
   const videoApiKey = videoConfig.apiKey;
   const videoApiEndpoint = videoConfig.apiEndpoint;
   const videoModelName = videoConfig.modelName;
+  const isCharacterPage = location.pathname.startsWith('/characters');
 
   const pickLatestKey = (keys: StoredApiKey[], matcher: (item: StoredApiKey) => boolean) => {
     return keys
@@ -137,15 +150,18 @@ export default function App() {
       if (!response.ok || !Array.isArray(response.data)) {
         setStoredTextApiKey(null);
         setStoredVideoApiKey(null);
+        setStoredImageApiKey(null);
         return;
       }
 
       const keys = response.data as StoredApiKey[];
       const nextTextKey = pickLatestKey(keys, (item) => isTextProvider(item.provider));
       const nextVideoKey = pickLatestKey(keys, (item) => isVideoProvider(item.provider));
+      const nextImageKey = pickLatestKey(keys, (item) => isImageProvider(item.provider));
 
       setStoredTextApiKey(nextTextKey);
       setStoredVideoApiKey(nextVideoKey);
+      setStoredImageApiKey(nextImageKey);
     };
 
     if (user?.id) {
@@ -156,11 +172,14 @@ export default function App() {
   const handleSaveApiKeys = async (nextKeys: {
     text: WorkflowApiConfigDraft;
     video: WorkflowApiConfigDraft;
+    image: WorkflowApiConfigDraft;
   }) => {
     const normalizedText = normalizeWorkflowConfig(nextKeys.text, 'text');
     const normalizedVideo = normalizeWorkflowConfig(nextKeys.video, 'video');
+    const normalizedImage = normalizeWorkflowConfig(nextKeys.image, 'image');
     const normalizedTextKey = normalizedText.apiKey.trim();
     const normalizedVideoKey = normalizedVideo.apiKey.trim();
+    const normalizedImageKey = normalizedImage.apiKey.trim();
 
     const cleanupCategoryKeys = async (
       keys: StoredApiKey[],
@@ -212,6 +231,21 @@ export default function App() {
       await cleanupCategoryKeys(currentKeys, (item) => isVideoProvider(item.provider), null);
     }
 
+    if (normalizedImageKey) {
+      const response = await userApi.createApiKey({
+        provider: normalizedImage.provider,
+        api_key: normalizedImageKey,
+        api_endpoint: normalizedImage.apiEndpoint.trim() || undefined,
+        model_name: normalizedImage.modelName.trim() || undefined,
+      });
+      if (!response.ok) {
+        throw new Error(response.message || '生图 API Key 保存失败');
+      }
+      await cleanupCategoryKeys(currentKeys, (item) => isImageProvider(item.provider), normalizedImage.provider);
+    } else {
+      await cleanupCategoryKeys(currentKeys, (item) => isImageProvider(item.provider), null);
+    }
+
     const latestKeys = await userApi.listApiKeys();
     if (!latestKeys.ok || !Array.isArray(latestKeys.data)) {
       throw new Error(latestKeys.message || '重新加载 API Key 失败');
@@ -220,6 +254,7 @@ export default function App() {
     const keys = latestKeys.data as StoredApiKey[];
     setStoredTextApiKey(pickLatestKey(keys, (item) => isTextProvider(item.provider)));
     setStoredVideoApiKey(pickLatestKey(keys, (item) => isVideoProvider(item.provider)));
+    setStoredImageApiKey(pickLatestKey(keys, (item) => isImageProvider(item.provider)));
   };
 
   const handleNext = () => {
@@ -243,6 +278,15 @@ export default function App() {
   };
 
   const renderStep = () => {
+    if (isCharacterPage) {
+      return (
+        <CharacterManagement
+          imageConfig={imageConfig}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+        />
+      );
+    }
+
     switch (currentStep) {
       case 1:
         return (
@@ -308,14 +352,21 @@ export default function App() {
     <div className="flex h-screen w-full bg-app-bg overflow-hidden text-text-main">
       <Sidebar
         currentStep={currentStep}
-        setCurrentStep={setCurrentStep}
+        setCurrentStep={(step) => {
+          setCurrentStep(step);
+          if (location.pathname !== '/') {
+            navigate('/');
+          }
+        }}
         completedSteps={completedSteps}
+        activeView={isCharacterPage ? 'characters' : 'workflow'}
+        onOpenCharacters={() => navigate('/characters')}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenPromptTemplates={() => setIsPromptTemplatesOpen(true)}
         onOpenAbout={() => setIsAboutOpen(true)}
       />
       <div className="flex flex-col flex-1 min-w-0">
-        <TopBar currentStep={currentStep} />
+        <TopBar currentStep={currentStep} title={isCharacterPage ? '人物管理' : undefined} />
         <main className="flex-1 overflow-y-auto p-6">
           {renderStep()}
         </main>
@@ -340,6 +391,14 @@ export default function App() {
               modelName: storedVideoApiKey.model_name,
             }
           : getDefaultConfig('video')}
+        imageConfig={storedImageApiKey
+          ? {
+              provider: storedImageApiKey.provider,
+              apiKey: storedImageApiKey.api_key,
+              apiEndpoint: storedImageApiKey.api_endpoint,
+              modelName: storedImageApiKey.model_name,
+            }
+          : getDefaultConfig('image')}
         onSave={handleSaveApiKeys}
       />
       <PromptTemplateModal

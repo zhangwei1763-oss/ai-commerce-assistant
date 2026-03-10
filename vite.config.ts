@@ -976,25 +976,6 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
-      {
-        name: 'local-api-test-endpoint',
-        configureServer(server) {
-          server.middlewares.use(createApiTestHandler(env));
-          server.middlewares.use(createGenerateScriptsHandler(env));
-          server.middlewares.use(createAnalyzeViralVideoHandler(env));
-          server.middlewares.use(createDeriveViralScriptsHandler(env));
-          server.middlewares.use(createGenerateVideoHandler(env));
-          server.middlewares.use(createVideoStatusHandler(env));
-        },
-        configurePreviewServer(server) {
-          server.middlewares.use(createApiTestHandler(env));
-          server.middlewares.use(createGenerateScriptsHandler(env));
-          server.middlewares.use(createAnalyzeViralVideoHandler(env));
-          server.middlewares.use(createDeriveViralScriptsHandler(env));
-          server.middlewares.use(createGenerateVideoHandler(env));
-          server.middlewares.use(createVideoStatusHandler(env));
-        },
-      },
     ],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
@@ -1009,19 +990,11 @@ export default defineConfig(({ mode }) => {
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       proxy: {
-        '/api/auth': {
+        '/api': {
           target: 'http://localhost:8000',
           changeOrigin: true,
         },
-        '/api/user': {
-          target: 'http://localhost:8000',
-          changeOrigin: true,
-        },
-        '/api/admin': {
-          target: 'http://localhost:8000',
-          changeOrigin: true,
-        },
-        '/api/sms': {
+        '/storage': {
           target: 'http://localhost:8000',
           changeOrigin: true,
         },

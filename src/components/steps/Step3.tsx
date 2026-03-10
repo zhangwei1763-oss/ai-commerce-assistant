@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Film, Image as ImageIcon, User, Loader2, X, AlertCircle } from 'lucide-react';
+import { AlertCircle, Film, Image as ImageIcon, Loader2, Play, User, Users, X } from 'lucide-react';
 import type { GeneratedScript, Step1FormData, Step3VideoTask } from '../../App';
-import { buildApiUrl } from '../../services/api';
+import CharacterSelector from '../CharacterSelector';
+import { buildApiUrl, characterApi, type CharacterRecord } from '../../services/api';
+import type { ScriptCharacterSelection } from '../../types/character';
 
 type Step3Props = {
   onNext: () => void;
@@ -26,6 +28,16 @@ type UploadImage = {
   file: File;
   preview: string;
   base64: string;
+};
+
+type ReferenceImagePayload = {
+  imageUrl: string;
+  label: string;
+};
+
+type CharacterRefreshResult = {
+  ok: boolean;
+  message: string;
 };
 
 function fileToDataUrl(file: File) {
@@ -70,9 +82,70 @@ export default function Step3({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
   const [productImages, setProductImages] = useState<UploadImage[]>([]);
-  const [personImages, setPersonImages] = useState<UploadImage[]>([]);
+  const [savedCharacters, setSavedCharacters] = useState<CharacterRecord[]>([]);
+  const [characterSelections, setCharacterSelections] = useState<Record<number, ScriptCharacterSelection | undefined>>({});
+  const [isCharacterLoading, setIsCharacterLoading] = useState(false);
+  const [characterMessage, setCharacterMessage] = useState('');
+  const [characterMessageType, setCharacterMessageType] = useState<'success' | 'error' | ''>('');
+  const [selectorScriptId, setSelectorScriptId] = useState<number | null>(null);
   const productInputRef = useRef<HTMLInputElement>(null);
-  const personInputRef = useRef<HTMLInputElement>(null);
+
+  const loadCharacters = async ({ manual = false }: { manual?: boolean } = {}): Promise<CharacterRefreshResult> => {
+    setIsCharacterLoading(true);
+    try {
+      const response = await characterApi.list({ limit: 100, offset: 0 });
+      if (!response.ok || !response.data) {
+        const message = response.message || '人物库加载失败';
+        setCharacterMessage(message);
+        setCharacterMessageType('error');
+        return { ok: false, message };
+      }
+
+      const nextItems = response.data.items;
+      const nextIds = new Set(nextItems.map((item) => item.id));
+      setSavedCharacters(nextItems);
+      setCharacterSelections((prev) => {
+        const nextState: Record<number, ScriptCharacterSelection | undefined> = {};
+        Object.entries(prev).forEach(([key, value]) => {
+          if (value?.source === 'saved' && !nextIds.has(value.character.id)) {
+            return;
+          }
+          nextState[Number(key)] = value;
+        });
+        return nextState;
+      });
+
+      if (manual) {
+        const message = `人物库已刷新，共 ${nextItems.length} 张人物图`;
+        setCharacterMessage(message);
+        setCharacterMessageType('success');
+        return { ok: true, message };
+      }
+
+      setCharacterMessage('');
+      setCharacterMessageType('');
+      return { ok: true, message: '' };
+    } finally {
+      setIsCharacterLoading(false);
+    }
+  };
+
+  const replaceCharacterSelection = (scriptId: number, nextSelection?: ScriptCharacterSelection) => {
+    setCharacterSelections((prev) => {
+      const current = prev[scriptId];
+      if (current?.source === 'upload' && (!nextSelection || nextSelection.source !== 'upload' || nextSelection.previewUrl !== current.previewUrl)) {
+        URL.revokeObjectURL(current.previewUrl);
+      }
+      return {
+        ...prev,
+        [scriptId]: nextSelection,
+      };
+    });
+  };
+
+  useEffect(() => {
+    void loadCharacters();
+  }, []);
 
   useEffect(() => {
     const nextScripts = generatedScripts.map((s) => {
@@ -98,6 +171,21 @@ export default function Step3({
     setVideoTasks((prev) => {
       const validIds = new Set(nextScripts.map((item) => item.id));
       return prev.filter((task) => validIds.has(task.scriptId));
+    });
+    setCharacterSelections((prev) => {
+      const validIds = new Set(nextScripts.map((item) => item.id));
+      const nextState: Record<number, ScriptCharacterSelection | undefined> = {};
+      Object.entries(prev).forEach(([key, value]) => {
+        const scriptId = Number(key);
+        if (!validIds.has(scriptId)) {
+          if (value?.source === 'upload') {
+            URL.revokeObjectURL(value.previewUrl);
+          }
+          return;
+        }
+        nextState[scriptId] = value;
+      });
+      return nextState;
     });
     setGenerateError('');
   }, [generatedScripts, setVideoTasks]);
@@ -132,15 +220,19 @@ export default function Step3({
   useEffect(() => {
     return () => {
       productImages.forEach((img) => URL.revokeObjectURL(img.preview));
-      personImages.forEach((img) => URL.revokeObjectURL(img.preview));
+      Object.values(characterSelections).forEach((item) => {
+        if (item?.source === 'upload') {
+          URL.revokeObjectURL(item.previewUrl);
+        }
+      });
     };
-  }, [productImages, personImages]);
+  }, [characterSelections, productImages]);
 
   const selectedScripts = useMemo(() => scripts.filter((s) => s.selected), [scripts]);
   const selectedCount = selectedScripts.length;
   const finishedCount = videoTasks.filter((t) => t.status === 'completed' || t.status === 'failed').length;
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'product' | 'person') => {
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files: File[] = e.target.files ? Array.from(e.target.files) : [];
     if (!files.length) return;
 
@@ -152,31 +244,19 @@ export default function Step3({
           base64: String(reader.result || ''),
           preview: URL.createObjectURL(file),
         };
-        if (type === 'product') {
-          setProductImages((prev) => [...prev, item]);
-        } else {
-          setPersonImages((prev) => [...prev, item]);
-        }
+        setProductImages((prev) => [...prev, item]);
       };
       reader.readAsDataURL(file);
     });
     e.target.value = '';
   };
 
-  const removeImage = (type: 'product' | 'person', index: number) => {
-    if (type === 'product') {
-      setProductImages((prev) => {
-        const item = prev[index];
-        if (item) URL.revokeObjectURL(item.preview);
-        return prev.filter((_, i) => i !== index);
-      });
-    } else {
-      setPersonImages((prev) => {
-        const item = prev[index];
-        if (item) URL.revokeObjectURL(item.preview);
-        return prev.filter((_, i) => i !== index);
-      });
-    }
+  const removeImage = (index: number) => {
+    setProductImages((prev) => {
+      const item = prev[index];
+      if (item) URL.revokeObjectURL(item.preview);
+      return prev.filter((_, i) => i !== index);
+    });
   };
 
   const updatePrompt = (id: number, nextPrompt: string) => {
@@ -185,6 +265,44 @@ export default function Step3({
 
   const toggleSelect = (id: number) => {
     setScripts((prev) => prev.map((s) => (s.id === id ? { ...s, selected: !s.selected } : s)));
+  };
+
+  const resolveCharacterReference = (scriptId: number): ReferenceImagePayload | null => {
+    const selection = characterSelections[scriptId];
+    if (selection?.source === 'saved') {
+      return {
+        imageUrl: selection.character.image_public_url,
+        label: `人物库 / ${selection.character.name}`,
+      };
+    }
+    if (selection?.source === 'upload') {
+      return {
+        imageUrl: selection.imageDataUrl,
+        label: `本地上传 / ${selection.name}`,
+      };
+    }
+    return null;
+  };
+
+  const resolveProductReference = (fallbackIndex: number): ReferenceImagePayload | null => {
+    const fallback = productImages[fallbackIndex % Math.max(productImages.length, 1)];
+    if (fallback) {
+      return {
+        imageUrl: fallback.base64,
+        label: `产品图 / ${fallback.file.name}`,
+      };
+    }
+    return null;
+  };
+
+  const resolveVideoReferences = (scriptId: number, fallbackIndex: number) => {
+    const character = resolveCharacterReference(scriptId);
+    const product = resolveProductReference(fallbackIndex);
+    return {
+      character,
+      product,
+      hasAny: Boolean(character?.imageUrl || product?.imageUrl),
+    };
   };
 
   const handleStartGenerate = async () => {
@@ -198,9 +316,9 @@ export default function Step3({
       return;
     }
 
-    const allImages = [...productImages, ...personImages];
-    if (!allImages.length) {
-      setGenerateError('请至少上传 1 张参考图片（产品图或人物图）');
+    const hasAnyImage = selectedScripts.some((script, index) => resolveVideoReferences(script.id, index).hasAny);
+    if (!hasAnyImage) {
+      setGenerateError('请至少上传产品图，或为脚本选择人物图');
       return;
     }
 
@@ -219,11 +337,22 @@ export default function Step3({
     try {
       const submittedTasks: Step3VideoTask[] = [];
       const submissionErrors: string[] = [];
-      for (let i = 0; i < selectedScripts.length; i++) {
+
+      for (let i = 0; i < selectedScripts.length; i += 1) {
         const script = selectedScripts[i];
-        const pickedImage = allImages[i % allImages.length];
         const prompt = normalizePrompt(script);
         const durationSeconds = resolveDurationSeconds(script);
+        const references = resolveVideoReferences(script.id, i);
+
+        if (!references.hasAny) {
+          const message = '请为该脚本选择人物图，或补充至少一张产品图';
+          submissionErrors.push(`${script.title}: ${message}`);
+          setVideoTasks((prev) => prev.map((task) => (
+            task.scriptId === script.id ? { ...task, status: 'failed', progress: 0, error: message } : task
+          )));
+          continue;
+        }
+
         try {
           const response = await fetch(buildApiUrl('/api/generate-video'), {
             method: 'POST',
@@ -234,7 +363,9 @@ export default function Step3({
               modelName: videoModelName,
               prompt,
               style: renderStyle,
-              imageUrl: pickedImage.base64,
+              imageUrl: references.character?.imageUrl || references.product?.imageUrl || '',
+              characterImageUrl: references.character?.imageUrl || '',
+              productImageUrl: references.product?.imageUrl || '',
               durationSeconds,
             }),
           });
@@ -253,7 +384,9 @@ export default function Step3({
           });
           setVideoTasks((prev) =>
             prev.map((task) =>
-              task.scriptId === script.id ? { ...task, status: 'processing', progress: 10, taskId: String(data.taskId || '') } : task,
+              task.scriptId === script.id
+                ? { ...task, status: 'processing', progress: 10, taskId: String(data.taskId || '') }
+                : task,
             ),
           );
         } catch (error) {
@@ -387,50 +520,92 @@ export default function Step3({
     return map;
   }, [videoTasks]);
 
+  const selectorSelection = selectorScriptId ? characterSelections[selectorScriptId] || null : null;
+
   return (
     <div className="max-w-6xl mx-auto min-h-full flex flex-col animate-in fade-in slide-in-from-bottom-4 duration-500 pb-4">
       <h2 className="text-title mb-4 flex-shrink-0">AI视频生成</h2>
 
       <div className="grid grid-cols-12 gap-6 mb-6 flex-shrink-0">
         <div className="col-span-5 bg-card rounded-lg shadow-sm border border-gray-200 p-4 flex flex-col max-h-[420px]">
-          <h3 className="text-subtitle mb-3">脚本选择 (双击编辑提示词)</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-subtitle">脚本选择 (双击编辑提示词)</h3>
+            <span className="text-xs text-gray-500">每个脚本可单独绑定人物图</span>
+          </div>
           {scripts.length === 0 ? (
             <div className="flex-1 flex items-center justify-center text-sm text-gray-400 py-6">暂无脚本，请先在第2步生成文案</div>
           ) : (
             <div className="space-y-2 flex-1 overflow-y-auto pr-2">
-              {scripts.map((script) => (
-                <div key={script.id} className="border border-gray-100 rounded hover:border-gray-300 transition-colors">
-                  {editingId === script.id ? (
-                    <div className="p-3 bg-blue-50/50">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm font-bold text-gray-700">{script.title}</span>
-                        <button type="button" onClick={() => setEditingId(null)} className="text-xs bg-accent text-white px-2 py-1 rounded">
-                          完成
-                        </button>
+              {scripts.map((script) => {
+                const selection = characterSelections[script.id];
+                return (
+                  <div key={script.id} className="border border-gray-100 rounded hover:border-gray-300 transition-colors">
+                    {editingId === script.id ? (
+                      <div className="p-3 bg-blue-50/50">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-sm font-bold text-gray-700">{script.title}</span>
+                          <button type="button" onClick={() => setEditingId(null)} className="text-xs bg-accent text-white px-2 py-1 rounded">
+                            完成
+                          </button>
+                        </div>
+                        <textarea
+                          className="w-full text-xs p-2 border border-gray-300 rounded outline-none focus:border-accent h-24 resize-none"
+                          value={script.prompt}
+                          onChange={(e) => updatePrompt(script.id, e.target.value)}
+                          autoFocus
+                        />
                       </div>
-                      <textarea
-                        className="w-full text-xs p-2 border border-gray-300 rounded outline-none focus:border-accent h-24 resize-none"
-                        value={script.prompt}
-                        onChange={(e) => updatePrompt(script.id, e.target.value)}
-                        autoFocus
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-start p-2 cursor-pointer" onDoubleClick={() => setEditingId(script.id)}>
-                      <input
-                        type="checkbox"
-                        checked={script.selected}
-                        onChange={() => toggleSelect(script.id)}
-                        className="rounded text-accent focus:ring-accent mr-3 mt-1"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-800 truncate">{script.title}</div>
-                        <div className="text-xs text-gray-500 truncate mt-0.5">{script.prompt}</div>
+                    ) : (
+                      <div className="p-2">
+                        <div className="flex items-start cursor-pointer" onDoubleClick={() => setEditingId(script.id)}>
+                          <input
+                            type="checkbox"
+                            checked={script.selected}
+                            onChange={() => toggleSelect(script.id)}
+                            className="rounded text-accent focus:ring-accent mr-3 mt-1"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-gray-800 truncate">{script.title}</div>
+                            <div className="text-xs text-gray-500 truncate mt-0.5">{script.prompt}</div>
+                          </div>
+                        </div>
+                        <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-[11px] font-medium text-gray-500">人物图</div>
+                              <div className="text-xs text-gray-700 truncate">
+                                {selection?.source === 'saved'
+                                  ? `人物库 / ${selection.character.name}`
+                                  : selection?.source === 'upload'
+                                    ? `本地上传 / ${selection.name}`
+                                    : '未选择，将回退到产品图'}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectorScriptId(script.id)}
+                                className="rounded-lg bg-white px-3 py-1.5 text-xs text-gray-700 border border-gray-200 hover:border-gray-300"
+                              >
+                                选择人物图
+                              </button>
+                              {selection && (
+                                <button
+                                  type="button"
+                                  onClick={() => replaceCharacterSelection(script.id)}
+                                  className="rounded-lg bg-white px-2 py-1.5 text-xs text-gray-500 border border-gray-200 hover:border-gray-300"
+                                >
+                                  清空
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -460,28 +635,36 @@ export default function Step3({
           </div>
 
           <div className="mb-4">
-            <label className="block text-sm text-gray-600 mb-2">参考图片</label>
-            <input ref={productInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleImageUpload(e, 'product')} />
-            <input ref={personInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => handleImageUpload(e, 'person')} />
-            <div className="flex space-x-3 mb-3">
-              <button type="button" onClick={() => productInputRef.current?.click()} className="flex items-center px-4 py-2 border border-dashed border-gray-300 rounded hover:border-accent hover:text-accent hover:bg-blue-50 transition-colors text-sm text-gray-600">
+            <label className="block text-sm text-gray-600 mb-2">产品参考图</label>
+            <input ref={productInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
+            <div className="flex flex-wrap gap-3 mb-3">
+              <button
+                type="button"
+                onClick={() => productInputRef.current?.click()}
+                className="flex items-center px-4 py-2 border border-dashed border-gray-300 rounded hover:border-accent hover:text-accent hover:bg-blue-50 transition-colors text-sm text-gray-600"
+              >
                 <ImageIcon className="w-4 h-4 mr-2" />
                 添加产品图片
               </button>
-              <button type="button" onClick={() => personInputRef.current?.click()} className="flex items-center px-4 py-2 border border-dashed border-gray-300 rounded hover:border-accent hover:text-accent hover:bg-blue-50 transition-colors text-sm text-gray-600">
-                <User className="w-4 h-4 mr-2" />
-                添加人物图片
+                              <button
+                                type="button"
+                                onClick={() => { void loadCharacters({ manual: true }); }}
+                                disabled={isCharacterLoading}
+                                className="flex items-center px-4 py-2 border border-gray-300 rounded hover:border-accent hover:text-accent hover:bg-blue-50 transition-colors text-sm text-gray-600 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <Users className={`w-4 h-4 mr-2 ${isCharacterLoading ? 'animate-pulse' : ''}`} />
+                                刷新人物库
               </button>
             </div>
 
             {productImages.length > 0 && (
-              <div className="mb-2">
+              <div className="mb-3">
                 <span className="text-xs text-gray-500 mb-1 block">产品图片 ({productImages.length})</span>
                 <div className="flex flex-wrap gap-2">
                   {productImages.map((img, i) => (
                     <div key={`p-${i}`} className="relative group w-14 h-14 rounded border border-gray-200 overflow-hidden">
                       <img src={img.preview} alt={`产品图${i + 1}`} className="w-full h-full object-cover" />
-                      <button type="button" onClick={() => removeImage('product', i)} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button type="button" onClick={() => removeImage(i)} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <X className="w-3 h-3" />
                       </button>
                     </div>
@@ -489,21 +672,18 @@ export default function Step3({
                 </div>
               </div>
             )}
-            {personImages.length > 0 && (
-              <div>
-                <span className="text-xs text-gray-500 mb-1 block">人物图片 ({personImages.length})</span>
-                <div className="flex flex-wrap gap-2">
-                  {personImages.map((img, i) => (
-                    <div key={`u-${i}`} className="relative group w-14 h-14 rounded border border-gray-200 overflow-hidden">
-                      <img src={img.preview} alt={`人物图${i + 1}`} className="w-full h-full object-cover" />
-                      <button type="button" onClick={() => removeImage('person', i)} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
+
+            <div className="rounded-xl border border-gray-100 bg-slate-50 px-4 py-3 text-xs text-slate-600 leading-5">
+              当前逻辑：
+              每个脚本都可单独绑定人物图；如果同时存在人物图和产品图，系统会先自动拼接成一张“左侧人物参考 + 右侧产品参考”的组合图，再提交给视频模型。
+              这张组合图只用于识别人物和产品，不应直接出现在视频首帧中。
+              如果只存在其中一种素材，则仅提交该素材。
+              {characterMessage && (
+                <div className={`mt-2 ${characterMessageType === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
+                  {characterMessage}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           <div className="mt-auto pt-4 border-t border-gray-100">
@@ -559,8 +739,11 @@ export default function Step3({
             <div className="h-full flex items-center justify-center text-sm text-gray-400">请先勾选脚本</div>
           ) : (
             <div className="grid grid-cols-3 gap-4">
-              {selectedScripts.map((script) => {
+              {selectedScripts.map((script, index) => {
                 const task = taskByScriptId.get(script.id);
+                const selection = characterSelections[script.id];
+                const characterReference = resolveCharacterReference(script.id);
+                const productReference = resolveProductReference(index);
                 return (
                   <div key={script.id} className="border border-gray-200 rounded-lg overflow-hidden">
                     <div className="aspect-[9/16] bg-gray-100 relative flex items-center justify-center">
@@ -591,8 +774,24 @@ export default function Step3({
                         </div>
                       )}
                     </div>
-                    <div className="p-2 bg-white text-xs text-center border-t border-gray-100 truncate">
-                      {script.title}
+                    <div className="p-2 bg-white text-xs border-t border-gray-100">
+                      <div className="truncate text-center">{script.title}</div>
+                      <div className="mt-1 flex items-center gap-1 text-gray-500 truncate">
+                        <User className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="truncate">
+                          {selection?.source === 'saved'
+                            ? selection.character.name
+                            : selection?.source === 'upload'
+                              ? selection.name
+                              : '未设置人物图'}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-1 text-gray-500 truncate">
+                        <ImageIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="truncate">
+                          {productReference?.label || (characterReference ? '未设置产品图，将仅使用人物图' : '未设置产品图')}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 );
@@ -610,6 +809,34 @@ export default function Step3({
           下一步：数据回流进化
         </button>
       </div>
+
+      <CharacterSelector
+        isOpen={selectorScriptId !== null}
+        characters={savedCharacters}
+        selected={selectorSelection}
+        onClose={() => setSelectorScriptId(null)}
+        onRefresh={loadCharacters}
+        onSelectCharacter={(character) => {
+          if (selectorScriptId !== null) {
+            replaceCharacterSelection(selectorScriptId, { source: 'saved', character });
+          }
+        }}
+        onSelectUpload={(payload) => {
+          if (selectorScriptId !== null) {
+            replaceCharacterSelection(selectorScriptId, {
+              source: 'upload',
+              name: payload.name,
+              previewUrl: payload.previewUrl,
+              imageDataUrl: payload.imageDataUrl,
+            });
+          }
+        }}
+        onClear={() => {
+          if (selectorScriptId !== null) {
+            replaceCharacterSelection(selectorScriptId);
+          }
+        }}
+      />
     </div>
   );
 }
