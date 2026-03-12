@@ -35,6 +35,7 @@ class User(Base):
     viral_analyses = relationship("ViralAnalysis", back_populates="user", cascade="all, delete-orphan")
     characters = relationship("CharacterImage", back_populates="user", cascade="all, delete-orphan")
     character_groups = relationship("CharacterGroup", back_populates="user", cascade="all, delete-orphan")
+    license_keys = relationship("LicenseKey", foreign_keys="LicenseKey.bound_user_id", back_populates="bound_user")
 
 
 class UserApiKey(Base):
@@ -214,3 +215,25 @@ class CharacterGroup(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="character_groups")
+
+
+class LicenseKey(Base):
+    """卡密表"""
+    __tablename__ = "license_keys"
+
+    id = Column(String, primary_key=True, default=lambda: f"lic_{uuid.uuid4().hex[:8]}")
+    card_key = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(100))
+    note = Column(Text)
+    status = Column(String(20), default="active", nullable=False)
+    duration_days = Column(Integer, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    activated_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+    activation_count = Column(Integer, default=0, nullable=False)
+    is_admin = Column(Boolean, default=False, nullable=False)
+    bound_user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    bound_user = relationship("User", foreign_keys=[bound_user_id], back_populates="license_keys")

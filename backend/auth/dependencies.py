@@ -3,13 +3,14 @@
 FastAPI 依赖注入函数，用于获取当前用户
 """
 
+from datetime import datetime
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User
+from models import LicenseKey, User
 from auth.security import decode_access_token
 
 security = HTTPBearer()
@@ -44,6 +45,17 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="用户已被禁用"
         )
+
+    license_key = db.query(LicenseKey).filter(LicenseKey.bound_user_id == user.id).first()
+    if license_key is not None:
+        is_expired = bool(license_key.expires_at and license_key.expires_at <= datetime.utcnow())
+        if license_key.status != "active" or is_expired:
+            user.is_active = False
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="卡密已失效",
+            )
 
     return user
 

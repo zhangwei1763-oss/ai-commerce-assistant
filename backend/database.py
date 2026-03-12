@@ -30,8 +30,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db():
     """初始化数据库，自动建表"""
     from models import Base
+    from services.license_key_service import ensure_bootstrap_admin_key
     Base.metadata.create_all(bind=engine)
     _ensure_runtime_schema()
+    db = SessionLocal()
+    try:
+        ensure_bootstrap_admin_key(db)
+    finally:
+        db.close()
 
 
 def _ensure_runtime_schema():
@@ -50,6 +56,30 @@ def _ensure_runtime_schema():
         if "group_name" not in character_columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE character_images ADD COLUMN group_name VARCHAR"))
+
+    if "license_keys" in table_names:
+        license_columns = {column["name"] for column in inspector.get_columns("license_keys")}
+        statements = []
+        if "note" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN note TEXT")
+        if "duration_days" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN duration_days INTEGER")
+        if "expires_at" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN expires_at DATETIME")
+        if "activated_at" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN activated_at DATETIME")
+        if "last_used_at" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN last_used_at DATETIME")
+        if "activation_count" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN activation_count INTEGER DEFAULT 0")
+        if "is_admin" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN is_admin BOOLEAN DEFAULT 0")
+        if "bound_user_id" not in license_columns:
+            statements.append("ALTER TABLE license_keys ADD COLUMN bound_user_id VARCHAR")
+        if statements:
+            with engine.begin() as conn:
+                for statement in statements:
+                    conn.execute(text(statement))
 
 
 def get_db():

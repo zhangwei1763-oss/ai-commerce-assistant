@@ -4,12 +4,18 @@
 """
 
 import os
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
 
 class Settings(BaseSettings):
     """全局配置"""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # ---- 豆包API配置 ----
     DOUBAO_API_KEY: str = "your_doubao_api_key"
@@ -71,6 +77,10 @@ class Settings(BaseSettings):
     # 生产环境应从环境变量读取
     API_KEY_ENCRYPTION_KEY: str = "dev-api-key-encryption-key-change-me"
 
+    # ---- 卡密后台配置 ----
+    BOOTSTRAP_ADMIN_CARD_KEY: str = ""
+    BOOTSTRAP_ADMIN_CARD_NAME: str = "系统管理员"
+
     # ---- 短信服务配置（阿里云） ----
     ALIYUN_ACCESS_KEY_ID: str = ""
     ALIYUN_ACCESS_KEY_SECRET: str = ""
@@ -86,10 +96,6 @@ class Settings(BaseSettings):
     SMTP_FROM_NAME: str = "AI 带货助手"
     SMTP_USE_TLS: bool = False
     SMTP_USE_SSL: bool = True
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
     def init_storage_dirs(self):
         """启动时自动创建所有存储目录"""
