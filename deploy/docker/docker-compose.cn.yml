@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_now}
       TZ: Asia/Shanghai
     volumes:
-      - ./deploy/data/postgres:/var/lib/postgresql/data
+      - ../data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ai_commerce -d ai_commerce"]
       interval: 10s
@@ -20,16 +20,16 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ../../backend
       dockerfile: Dockerfile
     container_name: ai-commerce-backend
     restart: unless-stopped
     env_file:
-      - ./backend/.env.prod
+      - ../../backend/.env.prod
     environment:
       TZ: Asia/Shanghai
     volumes:
-      - ./deploy/data/storage:/app/storage
+      - ../data/storage:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,8 +38,8 @@ services:
 
   web:
     build:
-      context: .
-      dockerfile: Dockerfile.frontend
+      context: ../../
+      dockerfile: deploy/docker/frontend.Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
     container_name: ai-commerce-web
