@@ -20,6 +20,7 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+backend/.venv/
 
 # Database
 *.db
@@ -28,6 +29,7 @@ htmlcov/
 
 # Storage
 storage/
+backend/storage/
 *.mp4
 *.mov
 *.avi
@@ -35,3 +37,6 @@ storage/
 
 # OMC
 .omc/
+
+# Desktop build outputs
+release/

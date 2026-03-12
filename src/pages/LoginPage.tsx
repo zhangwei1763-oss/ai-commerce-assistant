@@ -1,115 +1,104 @@
 /**
- * 登录页面
+ * 卡密登录页面
  */
 
 import React, { useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { isDesktopClient } from '../lib/runtimeMode';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [searchParams] = useSearchParams();
-  const { login } = useAuth();
+  const { login, logout } = useAuth();
   const redirectTo = searchParams.get('redirect') || '/';
-  const successMessage = typeof location.state === 'object' && location.state && 'message' in location.state
-    ? String((location.state as { message?: string }).message || '')
-    : '';
-  const prefillEmail = typeof location.state === 'object' && location.state && 'email' in location.state
-    ? String((location.state as { email?: string }).email || '')
-    : '';
+  const desktopMode = isDesktopClient();
 
-  const [email, setEmail] = useState(prefillEmail);
-  const [password, setPassword] = useState('');
+  const [cardKey, setCardKey] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const normalizeLoginMessage = (message?: string) => {
+    if (!message) return '密码错误';
+    if (message.includes('卡密不存在') || message.includes('格式不正确')) {
+      return '密码错误';
+    }
+    return message;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    const result = await login(email, password);
+    const result = await login(cardKey);
     if (result.success) {
-      navigate(redirectTo);
+      if (result.user?.is_admin) {
+        navigate('/admin', { replace: true });
+      } else if (!desktopMode) {
+        logout();
+        setError('无权限');
+      } else {
+        navigate(redirectTo === '/admin' ? '/' : redirectTo, { replace: true });
+      }
     } else {
-      setError(result.message || '登录失败');
+      setError(normalizeLoginMessage(result.message));
     }
     setIsLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff_0%,#dbeafe_35%,#f8fafc_100%)] px-4">
       <div className="max-w-md w-full">
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          {/* Logo / 标题 */}
+        <div className="bg-white/95 backdrop-blur rounded-3xl shadow-2xl border border-white p-8">
           <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-600 text-white text-xl font-bold shadow-lg shadow-blue-200 mb-4">
+              AI
+            </div>
             <h1 className="text-3xl font-bold text-gray-900">AI 带货助手</h1>
-            <p className="text-gray-500 mt-2">登录到您的账户</p>
+            <p className="text-gray-500 mt-2">
+              {desktopMode ? '请输入管理员发放的卡密进行登录' : '网页端仅用于管理员卡密后台登录'}
+            </p>
           </div>
 
-          {/* 错误提示 */}
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded-xl text-sm">
               {error}
             </div>
           )}
 
-          {successMessage && (
-            <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm">
-              {successMessage}
-            </div>
-          )}
-
-          {/* 登录表单 */}
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-                邮箱地址
+              <label htmlFor="cardKey" className="block text-sm font-medium text-gray-700 mb-1">
+                卡密
               </label>
               <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="cardKey"
+                type="text"
+                value={cardKey}
+                onChange={(e) => setCardKey(e.target.value.toUpperCase())}
                 required
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                placeholder="your@email.com"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
-                密码
-              </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                placeholder="••••••••"
+                autoFocus
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition font-mono tracking-[0.12em]"
+                placeholder="XXXX-XXXX-XXXX-XXXX"
               />
             </div>
 
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? '登录中...' : '登录'}
+              {isLoading ? '登录中...' : '卡密登录'}
             </button>
           </form>
 
-          {/* 注册链接 */}
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-600">
-              还没有账户？{' '}
-              <a href="/register" className="text-blue-600 hover:text-blue-700 font-medium">
-                立即注册
-              </a>
+          <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-200 p-4 text-sm text-slate-600">
+            <p className="font-medium text-slate-700 mb-1">说明</p>
+            <p>
+              {desktopMode
+                ? '用户登录后请先在设置中填写自己的 AI API Key，卡密只负责软件授权。'
+                : '网页端只保留管理员卡密后台；普通用户请在桌面客户端登录并填写自己的 AI API Key。'}
             </p>
           </div>
         </div>

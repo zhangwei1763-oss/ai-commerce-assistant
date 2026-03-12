@@ -50,6 +50,9 @@ export type Step3VideoTask = {
   progress: number;
   videoUrl?: string;
   error?: string;
+  historyId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ViralAnalysis = {
@@ -89,6 +92,8 @@ export default function App() {
   const [storedTextApiKey, setStoredTextApiKey] = useState<StoredApiKey | null>(null);
   const [storedVideoApiKey, setStoredVideoApiKey] = useState<StoredApiKey | null>(null);
   const [storedImageApiKey, setStoredImageApiKey] = useState<StoredApiKey | null>(null);
+  const [hasLoadedApiKeys, setHasLoadedApiKeys] = useState(false);
+  const [hasPromptedApiSetup, setHasPromptedApiSetup] = useState(false);
   const [step1Data, setStep1Data] = useState<Step1FormData>({
     productName: '',
     coreSellingPoints: '',
@@ -133,6 +138,10 @@ export default function App() {
   const videoApiEndpoint = videoConfig.apiEndpoint;
   const videoModelName = videoConfig.modelName;
   const isCharacterPage = location.pathname.startsWith('/characters');
+  const missingRequiredApiCapabilities = [
+    !storedTextApiKey ? '文案' : null,
+    !storedVideoApiKey ? '视频' : null,
+  ].filter(Boolean) as string[];
 
   const pickLatestKey = (keys: StoredApiKey[], matcher: (item: StoredApiKey) => boolean) => {
     return keys
@@ -146,11 +155,13 @@ export default function App() {
 
   useEffect(() => {
     const loadUserApiKeys = async () => {
+      setHasLoadedApiKeys(false);
       const response = await userApi.listApiKeys();
       if (!response.ok || !Array.isArray(response.data)) {
         setStoredTextApiKey(null);
         setStoredVideoApiKey(null);
         setStoredImageApiKey(null);
+        setHasLoadedApiKeys(true);
         return;
       }
 
@@ -162,12 +173,25 @@ export default function App() {
       setStoredTextApiKey(nextTextKey);
       setStoredVideoApiKey(nextVideoKey);
       setStoredImageApiKey(nextImageKey);
+      setHasLoadedApiKeys(true);
     };
 
     if (user?.id) {
+      setHasPromptedApiSetup(false);
       void loadUserApiKeys();
+    } else {
+      setHasLoadedApiKeys(false);
+      setHasPromptedApiSetup(false);
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || user.is_admin || !hasLoadedApiKeys || hasPromptedApiSetup || missingRequiredApiCapabilities.length === 0) {
+      return;
+    }
+    setIsSettingsOpen(true);
+    setHasPromptedApiSetup(true);
+  }, [hasLoadedApiKeys, hasPromptedApiSetup, missingRequiredApiCapabilities.length, user]);
 
   const handleSaveApiKeys = async (nextKeys: {
     text: WorkflowApiConfigDraft;
@@ -317,6 +341,10 @@ export default function App() {
             videoApiKey={videoApiKey}
             videoApiEndpoint={videoApiEndpoint}
             videoModelName={videoModelName}
+            imageApiKey={imageConfig.apiKey}
+            imageApiProvider={imageConfig.provider}
+            imageApiEndpoint={imageConfig.apiEndpoint}
+            imageModelName={imageConfig.modelName}
             step1Data={step1Data}
             videoTasks={step3VideoTasks}
             setVideoTasks={setStep3VideoTasks}
@@ -368,6 +396,26 @@ export default function App() {
       <div className="flex flex-col flex-1 min-w-0">
         <TopBar currentStep={currentStep} title={isCharacterPage ? '人物管理' : undefined} />
         <main className="flex-1 overflow-y-auto p-6">
+          {hasLoadedApiKeys && missingRequiredApiCapabilities.length > 0 && (
+            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-amber-900">先接入你自己的 AI API Key</h2>
+                  <p className="mt-1 text-sm leading-6 text-amber-800">
+                    当前卡密只负责软件登录授权，不包含 AI 调用额度。请先在“设置”里填写你自己的
+                    {missingRequiredApiCapabilities.join(' / ')} API Key，才能正常使用对应功能。生图配置按需填写即可。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="shrink-0 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-amber-600 transition"
+                >
+                  立即配置
+                </button>
+              </div>
+            </div>
+          )}
           {renderStep()}
         </main>
         <StatusBar />

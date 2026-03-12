@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 
-type ApiTestType = 'text' | 'video';
+type ApiTestType = 'text' | 'video' | 'image';
 type Step1DataPayload = {
   productName?: string;
   coreSellingPoints?: string;
@@ -15,6 +15,9 @@ type Step1DataPayload = {
 
 type ScriptGenRequest = {
   apiKey: string;
+  provider?: string;
+  apiEndpoint?: string;
+  modelName?: string;
   options?: {
     count?: number;
     durationSeconds?: number;
@@ -41,12 +44,18 @@ type ViralAnalysisPayload = {
 
 type ViralAnalyzeRequest = {
   apiKey: string;
+  provider?: string;
+  apiEndpoint?: string;
+  modelName?: string;
   videoUrl?: string;
   step1Data?: Step1DataPayload;
 };
 
 type ViralDeriveRequest = {
   apiKey: string;
+  provider?: string;
+  apiEndpoint?: string;
+  modelName?: string;
   count?: number;
   durationSeconds?: number;
   step1Data?: Step1DataPayload;
@@ -62,11 +71,47 @@ type ProbeResult = {
   warning?: string;
 };
 
+type FrameImageGenerateRequest = {
+  apiKey?: string;
+  provider?: string;
+  apiEndpoint?: string;
+  modelName?: string;
+  prompt?: string;
+  scriptTitle?: string;
+  referenceImages?: string[];
+};
+
 const DEFAULT_TEXT_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/responses';
 const DEFAULT_VIDEO_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
+const DEFAULT_IMAGE_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
 const ARK_MODELS_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/models';
 const DEFAULT_TEXT_MODEL = 'ep-20260225204603-zcqr4';
 const DEFAULT_VIDEO_MODEL = 'ep-20260225204954-4sqgz';
+const DEFAULT_IMAGE_TEST_MODEL = 'doubao-seedream-4-0-250828';
+const PROMPT_TEMPLATE_PATTERN = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+const DEFAULT_SCRIPT_PROMPT_TEMPLATE = `
+你现在是一位拥有10年操盘经验的抖音/TikTok/视频号金牌带货短视频编导，
+深谙人性弱点、下沉市场痛点、短视频算法推流机制以及极速转化爆款逻辑。
+你的文案风格口语化、接地气、极具煽动性，能瞬间在竖屏信息流中抓住用户注意力并引导下单，
+请基于下列产品信息生成 {{count}} 条不重样的短视频脚本。
+必须输出 JSON 数组，不要输出任何解释文字，不要 Markdown。
+
+产品信息：
+- 产品名称：{{productName}}
+- 核心卖点：{{coreSellingPoints}}
+- 主要痛点：{{painPoints}}
+- 价格优势：{{priceAdvantage}}
+- 目标人群：{{audienceText}}
+
+脚本要求：
+- 每条脚本时长：{{durationSeconds}} 秒
+- 文案风格：{{styles}}
+- 结构固定为三段：0-{{hookEnd}}秒钩子、{{hookEnd}}-{{closeStart}}秒卖点展示、{{closeStart}}-{{durationSeconds}}秒转化收口
+- 脚本之间开头钩子与表达方式必须差异化
+
+输出 JSON 数组，每项结构如下：
+{{outputSchema}}
+`.trim();
 const VIDEO_TEST_IMAGE_URL =
   'https://ark-project.tos-cn-beijing.volces.com/doc_image/seepro_i2v.png';
 
@@ -74,12 +119,18 @@ function getArkModel(type: ApiTestType, env: Record<string, string>) {
   if (type === 'text') {
     return (env.ARK_TEXT_MODEL || env.ARK_MODEL || DEFAULT_TEXT_MODEL).trim();
   }
+  if (type === 'image') {
+    return (env.ARK_IMAGE_MODEL || env.ARK_MODEL || DEFAULT_IMAGE_TEST_MODEL).trim();
+  }
   return (env.ARK_VIDEO_MODEL || env.ARK_MODEL || DEFAULT_VIDEO_MODEL).trim();
 }
 
 function getTestEndpoint(type: ApiTestType, env: Record<string, string>) {
   if (type === 'text') {
     return (env.ARK_TEXT_TEST_ENDPOINT || DEFAULT_TEXT_ENDPOINT).trim();
+  }
+  if (type === 'image') {
+    return (env.ARK_IMAGE_TEST_ENDPOINT || DEFAULT_IMAGE_ENDPOINT).trim();
   }
   return (env.ARK_VIDEO_TEST_ENDPOINT || DEFAULT_VIDEO_ENDPOINT).trim();
 }
@@ -100,6 +151,14 @@ function buildRequestPayload(type: ApiTestType, model: string) {
           ],
         },
       ],
+    };
+  }
+
+  if (type === 'image') {
+    return {
+      model,
+      prompt: '一只摆放在纯色背景上的白色马克杯，真实摄影风格，单主体',
+      n: 1,
     };
   }
 
@@ -283,6 +342,40 @@ function extractArkOutputText(payload: any): string {
   return chunks.join('\n').trim();
 }
 
+function extractApiErrorMessage(payload: any) {
+  if (typeof payload === 'string' && payload.trim()) {
+    return payload.trim();
+  }
+  if (payload && typeof payload === 'object') {
+    const error = payload.error;
+    if (error && typeof error === 'object') {
+      const nested = String(error.message || error.detail || error.reason || '').trim();
+      if (nested) return nested;
+    }
+    const direct = String(payload.message || payload.detail || payload.reason || '').trim();
+    if (direct) return direct;
+  }
+  return '';
+}
+
+function buildChatMessages(prompt: string, imageDataUrls: string[] = []) {
+  return [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        ...imageDataUrls
+          .filter((item) => typeof item === 'string' && item.startsWith('data:image/'))
+          .slice(0, 3)
+          .map((imageUrl) => ({
+            type: 'image_url',
+            image_url: { url: imageUrl },
+          })),
+      ],
+    },
+  ];
+}
+
 function parseModelJson(rawText: string) {
   const cleaned = rawText.trim();
   const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -320,20 +413,29 @@ function parseScriptsFromModelText(rawText: string, count: number, durationSecon
 }
 
 async function callArkTextModel(
-  env: Record<string, string>,
+  _env: Record<string, string>,
   apiKey: string,
   prompt: string,
   imageDataUrls: string[] = [],
+  options?: {
+    apiEndpoint?: string;
+    modelName?: string;
+  },
 ) {
-  const model = getArkModel('text', env);
-  const endpoint = getTestEndpoint('text', env);
+  const model = String(options?.modelName || '').trim();
+  const endpoint = String(options?.apiEndpoint || '').trim();
+
+  if (!endpoint) {
+    throw new Error('请先在设置中填写可用的文案 API 端点');
+  }
+  if (!model) {
+    throw new Error('请先在设置中填写文案模型名称');
+  }
+
+  const isResponsesApi = endpoint.toLowerCase().includes('/responses');
   const imageBlocks = imageDataUrls
     .filter((item) => typeof item === 'string' && item.startsWith('data:image/'))
-    .slice(0, 3)
-    .map((imageUrl) => ({
-      type: 'input_image',
-      image_url: imageUrl,
-    }));
+    .slice(0, 3);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1800000);
@@ -345,21 +447,31 @@ async function callArkTextModel(
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: prompt,
-              },
-              ...imageBlocks,
-            ],
-          },
-        ],
-      }),
+      body: JSON.stringify(
+        isResponsesApi
+          ? {
+              model,
+              input: [
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'input_text',
+                      text: prompt,
+                    },
+                    ...imageBlocks.map((imageUrl) => ({
+                      type: 'input_image',
+                      image_url: imageUrl,
+                    })),
+                  ],
+                },
+              ],
+            }
+          : {
+              model,
+              messages: buildChatMessages(prompt, imageBlocks),
+            },
+      ),
       signal: controller.signal,
     });
   } finally {
@@ -370,7 +482,7 @@ async function callArkTextModel(
     let message = `模型调用失败，状态码 ${response.status}`;
     try {
       const errorBody = await response.json();
-      message = errorBody?.error?.message || errorBody?.message || message;
+      message = extractApiErrorMessage(errorBody) || message;
     } catch {
       // ignore
     }
@@ -385,6 +497,168 @@ async function callArkTextModel(
   return rawText;
 }
 
+function normalizeImageEndpoint(endpoint?: string) {
+  const normalized = String(endpoint || '').trim();
+  return normalized || DEFAULT_IMAGE_ENDPOINT;
+}
+
+function normalizeImageGenerationErrorMessage(message: string, endpoint: string) {
+  const normalizedMessage = String(message || '').trim();
+  const lowerMessage = normalizedMessage.toLowerCase();
+  const lowerEndpoint = String(endpoint || '').trim().toLowerCase();
+
+  if (
+    normalizedMessage.includes('unknown field "messages"') ||
+    lowerEndpoint.includes('/chat/completions') ||
+    lowerEndpoint.includes('/responses') ||
+    lowerEndpoint.includes('/contents/generations/tasks')
+  ) {
+    return `当前填写的不是生图接口，请在设置里把“人物图 生图模型”的 API 端点改成图片生成地址，例如 ${DEFAULT_IMAGE_ENDPOINT}`;
+  }
+
+  return normalizedMessage || '首帧图生成失败';
+}
+
+function extractGeneratedImage(payload: any) {
+  const items = Array.isArray(payload?.data)
+    ? payload.data
+    : Array.isArray(payload?.images)
+      ? payload.images
+      : [];
+  const first = items[0] || payload?.data?.[0] || payload?.images?.[0] || payload;
+  const imageUrl = String(
+    first?.url ||
+    first?.image_url ||
+    first?.imageUrl ||
+    payload?.url ||
+    payload?.image_url ||
+    payload?.imageUrl ||
+    '',
+  ).trim();
+  const base64 = String(
+    first?.b64_json ||
+    first?.base64 ||
+    first?.image_base64 ||
+    first?.image_b64 ||
+    payload?.b64_json ||
+    payload?.base64 ||
+    '',
+  ).trim();
+  const revisedPrompt = String(first?.revised_prompt || first?.revisedPrompt || payload?.revised_prompt || '').trim();
+
+  if (base64) {
+    return {
+      imageUrl: `data:image/png;base64,${base64}`,
+      revisedPrompt,
+    };
+  }
+
+  return {
+    imageUrl,
+    revisedPrompt,
+  };
+}
+
+async function callImageGenerationModel({
+  apiKey,
+  apiEndpoint,
+  modelName,
+  prompt,
+  referenceImages = [],
+}: {
+  apiKey: string;
+  apiEndpoint: string;
+  modelName: string;
+  prompt: string;
+  referenceImages?: string[];
+}) {
+  const endpoint = normalizeImageEndpoint(apiEndpoint);
+  if (
+    endpoint.toLowerCase().includes('/chat/completions') ||
+    endpoint.toLowerCase().includes('/responses') ||
+    endpoint.toLowerCase().includes('/contents/generations/tasks')
+  ) {
+    throw new Error(`当前填写的不是生图接口，请在设置里把“人物图 生图模型”的 API 端点改成图片生成地址，例如 ${DEFAULT_IMAGE_ENDPOINT}`);
+  }
+  const images = referenceImages
+    .filter((item) => typeof item === 'string' && /^(data:image\/|https?:\/\/)/.test(item))
+    .slice(0, 4);
+
+  const basePayload: Record<string, unknown> = {
+    model: modelName.trim(),
+    prompt: prompt.trim(),
+    n: 1,
+  };
+
+  if (images.length === 1) {
+    basePayload.image = images[0];
+  } else if (images.length > 1) {
+    basePayload.image = images;
+  }
+
+  const payloadVariants: Array<Record<string, unknown>> = [
+    { ...basePayload, response_format: 'b64_json' },
+    { ...basePayload, response_format: 'url' },
+    { ...basePayload },
+  ];
+
+  let lastMessage = '首帧图生成失败';
+
+  for (let index = 0; index < payloadVariants.length; index += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180000);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payloadVariants[index]),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        let message = `生图接口调用失败，状态码 ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          message = errorBody?.error?.message || errorBody?.message || errorBody?.detail || message;
+        } catch {
+          // ignore
+        }
+        lastMessage = normalizeImageGenerationErrorMessage(message, endpoint);
+        if (response.status >= 500 || index === payloadVariants.length - 1) {
+          throw new Error(lastMessage);
+        }
+        continue;
+      }
+
+      const payload = await response.json();
+      const result = extractGeneratedImage(payload);
+      if (!result.imageUrl) {
+        lastMessage = '生图接口未返回图片地址';
+        if (index === payloadVariants.length - 1) {
+          throw new Error(lastMessage);
+        }
+        continue;
+      }
+
+      return result;
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('首帧图生成超时，请稍后重试');
+      }
+      if (index === payloadVariants.length - 1) {
+        throw error instanceof Error ? new Error(normalizeImageGenerationErrorMessage(error.message, endpoint)) : new Error(lastMessage);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new Error(lastMessage);
+}
+
 function getStoryboardTimings(durationSeconds: number) {
   const hookEnd = durationSeconds <= 5 ? 2 : 3;
   let closeStart = durationSeconds <= 5 ? durationSeconds - 1 : durationSeconds <= 10 ? durationSeconds - 3 : durationSeconds - 5;
@@ -395,6 +669,10 @@ function getStoryboardTimings(durationSeconds: number) {
   return { hookEnd, closeStart };
 }
 
+function renderPromptTemplate(templateContent: string, variables: Record<string, string>) {
+  return templateContent.replace(PROMPT_TEMPLATE_PATTERN, (_, key) => variables[key] ?? `{{${key}}}`);
+}
+
 function buildScriptPrompt(request: ScriptGenRequest) {
   const count = Math.max(1, Math.min(20, Number(request.options?.count || 10)));
   const durationSeconds = Math.max(5, Math.min(60, Number(request.options?.durationSeconds || 15)));
@@ -403,51 +681,28 @@ function buildScriptPrompt(request: ScriptGenRequest) {
     : ['口语化'];
   const info = request.step1Data || {};
   const audienceText = (info.targetAudiences || []).join('、') || '全人群';
-  const templateName = String(request.promptTemplate?.name || '').trim();
-  const templateContent = String(request.promptTemplate?.content || '').trim();
+  const templateContent = String(request.promptTemplate?.content || '').trim() || DEFAULT_SCRIPT_PROMPT_TEMPLATE;
   const { hookEnd, closeStart } = getStoryboardTimings(durationSeconds);
-  const templateRule = templateContent
-    ? `
-提示词模板（优先遵循）：
-- 模板名称：${templateName || '未命名模板'}
-- 模板内容：
-${templateContent}
-
-执行要求：
-- 在不违背产品信息和脚本要求的前提下，严格按上述模板的表达方式、结构和约束输出。
-`
-    : '';
-
-  const prompt = `
-你现在是一位拥有10年操盘经验的抖音/TikTok/视频号金牌带货短视频编导，
-深谙人性弱点、下沉市场痛点、短视频算法推流机制以及极速转化爆款逻辑。
-你的文案风格口语化、接地气、极具煽动性，能瞬间在竖屏信息流中抓住用户注意力并引导下单，
-请基于下列产品信息生成 ${count} 条不重样的短视频脚本。
-必须输出 JSON 数组，不要输出任何解释文字，不要 Markdown。
-
-产品信息：
-- 产品名称：${info.productName || ''}
-- 核心卖点：${info.coreSellingPoints || ''}
-- 主要痛点：${info.painPoints || ''}
-- 价格优势：${info.priceAdvantage || ''}
-- 目标人群：${audienceText}
-${templateRule}
-
-脚本要求：
-- 每条脚本时长：${durationSeconds} 秒
-- 文案风格：${styles.join('、')}
-- 结构固定为三段：0-${hookEnd}秒钩子、${hookEnd}-${closeStart}秒卖点展示、${closeStart}-${durationSeconds}秒转化收口
-- 脚本之间开头钩子与表达方式必须差异化
-
-输出 JSON 数组，每项结构如下：
-{
+  const outputSchema = `{
   "title": "脚本 1：xxx",
   "hook": "一句开头钩子",
   "narration": "完整口播文案",
   "storyboard": ["0-${hookEnd}秒：...", "${hookEnd}-${closeStart}秒：...", "${closeStart}-${durationSeconds}秒：..."],
   "visualPrompt": "用于视频生成的画面提示词"
-}
-`;
+}`;
+  const prompt = renderPromptTemplate(templateContent, {
+    count: String(count),
+    durationSeconds: String(durationSeconds),
+    styles: styles.join('、'),
+    productName: String(info.productName || '').trim() || '未填写',
+    coreSellingPoints: String(info.coreSellingPoints || '').trim() || '未填写',
+    painPoints: String(info.painPoints || '').trim() || '未填写',
+    priceAdvantage: String(info.priceAdvantage || '').trim() || '未填写',
+    audienceText,
+    hookEnd: String(hookEnd),
+    closeStart: String(closeStart),
+    outputSchema,
+  });
 
   return { prompt, count, durationSeconds, styles };
 }
@@ -600,7 +855,16 @@ function createGenerateScriptsHandler(env: Record<string, string>) {
         }
 
         const { prompt, count, durationSeconds } = buildScriptPrompt(parsed);
-        const rawText = await callArkTextModel(env, apiKey, prompt, parsed.step1Data?.imageDataUrls || []);
+        const rawText = await callArkTextModel(
+          env,
+          apiKey,
+          prompt,
+          parsed.step1Data?.imageDataUrls || [],
+          {
+            apiEndpoint: String(parsed.apiEndpoint || '').trim() || getTestEndpoint('text', env),
+            modelName: String(parsed.modelName || '').trim() || getArkModel('text', env),
+          },
+        );
         const scripts = parseScriptsFromModelText(rawText, count, durationSeconds);
         if (!scripts.length) {
           return jsonResponse(res, 502, {
@@ -656,6 +920,10 @@ function createAnalyzeViralVideoHandler(env: Record<string, string>) {
           apiKey,
           buildViralAnalysisPrompt(parsed),
           parsed.step1Data?.imageDataUrls || [],
+          {
+            apiEndpoint: String(parsed.apiEndpoint || '').trim() || getTestEndpoint('text', env),
+            modelName: String(parsed.modelName || '').trim() || getArkModel('text', env),
+          },
         );
         const analysis = normalizeViralAnalysis(parseModelJson(rawText));
 
@@ -703,6 +971,10 @@ function createDeriveViralScriptsHandler(env: Record<string, string>) {
           apiKey,
           prompt,
           parsed.step1Data?.imageDataUrls || [],
+          {
+            apiEndpoint: String(parsed.apiEndpoint || '').trim() || getTestEndpoint('text', env),
+            modelName: String(parsed.modelName || '').trim() || getArkModel('text', env),
+          },
         );
         const scripts = parseScriptsFromModelText(rawText, count, durationSeconds);
         if (!scripts.length) {
@@ -893,6 +1165,69 @@ function createVideoStatusHandler(env: Record<string, string>) {
   };
 }
 
+function createGenerateFrameImageHandler() {
+  return async (req: any, res: any, next: () => void) => {
+    const requestPath = String(req.url || '').split('?')[0];
+    if (requestPath !== '/api/generate-frame-image' && requestPath !== '/api/generate-frame-image/') return next();
+    if (req.method !== 'POST') {
+      return jsonResponse(res, 405, { ok: false, message: 'Method Not Allowed' });
+    }
+
+    let body = '';
+    req.on('data', (chunk: Buffer) => {
+      body += chunk.toString('utf8');
+    });
+
+    req.on('end', async () => {
+      try {
+        const parsed = (body ? JSON.parse(body) : {}) as FrameImageGenerateRequest;
+        const apiKey = String(parsed.apiKey || '').trim();
+        const apiEndpoint = normalizeImageEndpoint(parsed.apiEndpoint);
+        const modelName = String(parsed.modelName || '').trim();
+        const prompt = String(parsed.prompt || '').trim();
+        const referenceImages = Array.isArray(parsed.referenceImages)
+          ? parsed.referenceImages.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
+
+        if (!apiKey) {
+          return jsonResponse(res, 400, { ok: false, message: '缺少生图 API Key' });
+        }
+        if (!modelName) {
+          return jsonResponse(res, 400, { ok: false, message: '缺少生图模型名称' });
+        }
+        if (!prompt) {
+          return jsonResponse(res, 400, { ok: false, message: '缺少首帧图提示词' });
+        }
+        if (!referenceImages.length) {
+          return jsonResponse(res, 400, { ok: false, message: '请至少提供一张人物图或产品图作为参考' });
+        }
+
+        const result = await callImageGenerationModel({
+          apiKey,
+          apiEndpoint,
+          modelName,
+          prompt,
+          referenceImages,
+        });
+
+        return jsonResponse(res, 200, {
+          ok: true,
+          imageUrl: result.imageUrl,
+          revisedPrompt: result.revisedPrompt,
+          prompt,
+          provider: String(parsed.provider || '').trim(),
+          scriptTitle: String(parsed.scriptTitle || '').trim(),
+        });
+      } catch (error) {
+        return jsonResponse(res, 500, {
+          ok: false,
+          message: error instanceof Error ? error.message : '首帧图生成失败',
+        });
+      }
+    });
+  };
+}
+
 function createApiTestHandler(env: Record<string, string>) {
   return async (req: any, res: any, next: () => void) => {
     const requestPath = String(req.url || '').split('?')[0];
@@ -911,23 +1246,27 @@ function createApiTestHandler(env: Record<string, string>) {
         const parsed = body ? JSON.parse(body) : {};
         const type = parsed?.type as ApiTestType;
         const apiKey = String(parsed?.apiKey || '').trim();
+        const endpoint = String(parsed?.apiEndpoint || '').trim() || getTestEndpoint(type, env);
+        const model = String(parsed?.modelName || '').trim() || getArkModel(type, env);
 
-        if ((type !== 'text' && type !== 'video') || !apiKey) {
+        if ((type !== 'text' && type !== 'video' && type !== 'image') || !apiKey) {
           return jsonResponse(res, 400, {
             ok: false,
-            message: '参数错误：需要 type(text|video) 和 apiKey',
+            message: '参数错误：需要 type(text|video|image) 和 apiKey',
           });
         }
 
-        const model = getArkModel(type, env);
         if (!model) {
           return jsonResponse(res, 500, {
             ok: false,
-            message: `未配置 ${type === 'text' ? 'ARK_TEXT_MODEL' : 'ARK_VIDEO_MODEL'} 或 ARK_MODEL`,
+            message: type === 'text'
+              ? '未配置文案模型'
+              : type === 'video'
+                ? '未配置视频模型'
+                : '未配置生图模型',
           });
         }
 
-        const endpoint = getTestEndpoint(type, env);
         if (!endpoint) {
           return jsonResponse(res, 500, {
             ok: false,
@@ -972,10 +1311,36 @@ function createApiTestHandler(env: Record<string, string>) {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  const devApiProxyTarget = (env.VITE_DEV_API_PROXY_TARGET || 'http://8.131.147.231').trim();
+  const localDevHandlers = [
+    createGenerateScriptsHandler(env),
+    createAnalyzeViralVideoHandler(env),
+    createDeriveViralScriptsHandler(env),
+    createGenerateFrameImageHandler(),
+    createApiTestHandler(env),
+  ];
   return {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        name: 'local-step3-frame-image-api',
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            let index = 0;
+            const run = () => {
+              const handler = localDevHandlers[index];
+              index += 1;
+              if (!handler) {
+                next();
+                return;
+              }
+              void handler(req, res, run);
+            };
+            run();
+          });
+        },
+      },
     ],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
@@ -991,11 +1356,11 @@ export default defineConfig(({ mode }) => {
       hmr: process.env.DISABLE_HMR !== 'true',
       proxy: {
         '/api': {
-          target: 'http://localhost:8000',
+          target: devApiProxyTarget,
           changeOrigin: true,
         },
         '/storage': {
-          target: 'http://localhost:8000',
+          target: devApiProxyTarget,
           changeOrigin: true,
         },
       },

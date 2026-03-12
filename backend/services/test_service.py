@@ -54,8 +54,27 @@ def extract_error_message(payload: object) -> str:
     return ""
 
 
-def build_request_payload(api_type: ApiTestType, model: str) -> dict:
+def is_responses_endpoint(endpoint: str) -> bool:
+    return "/responses" in endpoint.lower()
+
+
+def build_request_payload(api_type: ApiTestType, model: str, endpoint: str) -> dict:
     if api_type == "text":
+        if is_responses_endpoint(endpoint):
+            return {
+                "model": model,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "Hi",
+                            }
+                        ],
+                    }
+                ],
+            }
         return {
             "model": model,
             "messages": [
@@ -144,7 +163,7 @@ async def probe_endpoint(api_type: ApiTestType, provider: str, endpoint: str, ap
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json=build_request_payload(api_type, model),
+                json=build_request_payload(api_type, model, endpoint),
             )
 
         if response.status_code < 400:

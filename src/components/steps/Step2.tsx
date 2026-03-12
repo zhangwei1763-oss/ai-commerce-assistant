@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { Copy, CheckSquare, Loader2, FileText } from 'lucide-react';
+import { Copy, Loader2, FileText } from 'lucide-react';
 import type { GeneratedScript, Step1FormData } from '../../App';
 import PromptTemplateSelector from '../PromptTemplateSelector';
 import { buildApiUrl } from '../../services/api';
+import { DEFAULT_SCRIPT_PROMPT_TEMPLATE, type PromptTemplateChoice } from '../../lib/defaultPromptTemplates';
 
 type Step2Props = {
   onNext: () => void;
@@ -26,10 +27,14 @@ function toDataUrl(file: File) {
   });
 }
 
-interface PromptTemplate {
-  id: string;
-  name: string;
-  content: string;
+function buildScriptContent(script: GeneratedScript) {
+  return [
+    script.title,
+    script.hook ? `【开头钩子】\n${script.hook}` : '',
+    script.narration ? `【脚本内容】\n${script.narration}` : '',
+    script.storyboard.length ? `【三分镜结构】\n${script.storyboard.join('\n')}` : '',
+    script.visualPrompt ? `【画面提示词】\n${script.visualPrompt}` : '',
+  ].filter(Boolean).join('\n\n');
 }
 
 export default function Step2({
@@ -49,23 +54,18 @@ export default function Step2({
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [isTemplateSelectorOpen, setIsTemplateSelectorOpen] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<PromptTemplate | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<PromptTemplateChoice | null>(null);
 
   const selectedStyleLabel = useMemo(() => styles.join('+') || '未选择风格', [styles]);
+  const activeTemplate = selectedTemplate ?? DEFAULT_SCRIPT_PROMPT_TEMPLATE;
+  const isUsingDefaultTemplate = selectedTemplate === null;
 
   const toggleStyle = (style: string) => {
     setStyles((prev) => (prev.includes(style) ? prev.filter((item) => item !== style) : [...prev, style]));
   };
 
   const copyScript = async (script: GeneratedScript) => {
-    const content = [
-      script.title,
-      `钩子: ${script.hook}`,
-      `口播文案: ${script.narration}`,
-      `三分镜: ${script.storyboard.join(' / ')}`,
-      `画面提示词: ${script.visualPrompt}`,
-    ].join('\n');
-    await navigator.clipboard.writeText(content);
+    await navigator.clipboard.writeText(buildScriptContent(script));
   };
 
   const generateScripts = async () => {
@@ -114,12 +114,8 @@ export default function Step2({
               styles,
             },
             promptTemplate: selectedTemplate
-              ? {
-                  id: selectedTemplate.id,
-                  name: selectedTemplate.name,
-                  content: selectedTemplate.content,
-                }
-              : null,
+              ? selectedTemplate
+              : activeTemplate,
             step1Data: {
               productName: step1Data.productName,
               coreSellingPoints: step1Data.coreSellingPoints,
@@ -264,24 +260,24 @@ export default function Step2({
               </span>
             </div>
           </div>
-          {selectedTemplate && (
-            <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm font-medium text-blue-800 flex items-center gap-1.5">
-                  <FileText className="w-4 h-4" />
-                  当前提示词模版：{selectedTemplate.name}
-                </span>
+          <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium text-blue-800 flex items-center gap-1.5">
+                <FileText className="w-4 h-4" />
+                当前提示词模版：{activeTemplate.name}
+              </span>
+              {!isUsingDefaultTemplate && (
                 <button
                   type="button"
                   onClick={() => setSelectedTemplate(null)}
                   className="text-xs text-blue-600 hover:text-blue-800"
                 >
-                  清除
+                  恢复默认
                 </button>
-              </div>
-              <p className="text-xs text-blue-600 line-clamp-1">{selectedTemplate.content}</p>
+              )}
             </div>
-          )}
+            <p className="text-xs text-blue-600 line-clamp-2">{activeTemplate.content}</p>
+          </div>
           <div className="flex justify-between text-subtext mb-1.5">
             <span>文案生成进度：{progress}%{isGenerating && progress < 90 ? '（AI 正在思考中...）' : ''}</span>
             <span className={isGenerating ? 'text-accent animate-pulse' : progress === 100 ? 'text-success' : 'text-gray-500'}>
@@ -319,38 +315,19 @@ export default function Step2({
               <span className="text-subtext">{durationSeconds}秒 · {selectedStyleLabel}</span>
             </div>
 
-            <div className="grid grid-cols-12 gap-4">
-              <div className="col-span-3 border-r border-gray-100 pr-4">
-                <div className="text-xs font-bold text-gray-500 mb-2">三分镜结构</div>
-                <ul className="space-y-2 text-xs">
-                  {script.storyboard.map((item) => (
-                    <li key={item} className="flex items-start">
-                      <span className="text-accent mr-1">■</span>
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="col-span-5 border-r border-gray-100 pr-4">
-                <div className="text-xs font-bold text-gray-500 mb-2">口播文案</div>
-                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{script.narration}</p>
-              </div>
-              <div className="col-span-4">
-                <div className="text-xs font-bold text-gray-500 mb-2">画面提示词 (Seedance)</div>
-                <p className="text-xs text-gray-600 bg-gray-50 p-2 rounded border border-gray-100 h-full whitespace-pre-wrap">
-                  {script.visualPrompt}
-                </p>
-              </div>
-            </div>
+            <textarea
+              readOnly
+              value={buildScriptContent(script)}
+              className="w-full min-h-[240px] rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-7 text-gray-700 outline-none resize-none"
+            />
           </div>
         ))}
       </div>
 
       <div className="flex items-center justify-between pt-4 border-t border-gray-200 mt-auto flex-shrink-0">
-        <button type="button" className="flex items-center px-4 py-2 text-text-main hover:bg-gray-100 rounded transition-colors text-btn">
-          <CheckSquare className="w-4 h-4 mr-2 text-accent" />
-          全选脚本
-        </button>
+        <div className="text-sm text-gray-500">
+          当前生效模板：<span className="font-medium text-gray-700">{activeTemplate.name}</span>
+        </div>
         <button
           onClick={onNext}
           disabled={scripts.length === 0}

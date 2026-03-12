@@ -10,14 +10,16 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 
 // 认证页面
 import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
 import AdminDashboard from './pages/AdminDashboard';
+import WebClientNotice from './pages/WebClientNotice';
 
 // 主应用
 import App from './App';
+import { isDesktopClient } from './lib/runtimeMode';
 
 function AppRouterContent() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
+  const desktopMode = isDesktopClient();
 
   if (isLoading) {
     return (
@@ -32,11 +34,15 @@ function AppRouterContent() {
       {/* 认证路由 */}
       <Route
         path="/login"
-        element={isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />}
+        element={
+          isAuthenticated
+            ? <Navigate to={user?.is_admin ? '/admin' : desktopMode ? '/' : '/portal'} replace />
+            : <LoginPage />
+        }
       />
       <Route
         path="/register"
-        element={isAuthenticated ? <Navigate to="/" replace /> : <RegisterPage />}
+        element={<Navigate to="/login" replace />}
       />
 
       {/* 受保护路由 */}
@@ -58,12 +64,21 @@ function AppRouterContent() {
         }
       />
 
+      <Route
+        path="/portal"
+        element={
+          <ProtectedRoute>
+            {user?.is_admin ? <Navigate to="/admin" replace /> : desktopMode ? <Navigate to="/" replace /> : <WebClientNotice />}
+          </ProtectedRoute>
+        }
+      />
+
       {/* 主应用 */}
       <Route
         path="/*"
         element={
           <ProtectedRoute>
-            <App />
+            {user?.is_admin ? <Navigate to="/admin" replace /> : desktopMode ? <App /> : <Navigate to="/portal" replace />}
           </ProtectedRoute>
         }
       />

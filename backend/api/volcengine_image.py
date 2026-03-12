@@ -41,6 +41,22 @@ def _extract_error_message(payload: Any) -> str:
     return ""
 
 
+def _normalize_image_generation_error_message(message: str, endpoint: str) -> str:
+    normalized_message = (message or "").strip()
+    lower_message = normalized_message.lower()
+    lower_endpoint = (endpoint or "").strip().lower()
+
+    if (
+        'unknown field "messages"' in normalized_message
+        or lower_endpoint.endswith("/chat/completions")
+        or "/responses" in lower_endpoint
+        or "/contents/generations/tasks" in lower_endpoint
+    ):
+        return "当前填写的不是生图接口，请在设置里把“人物图 生图模型”的 API 端点改成图片生成地址"
+
+    return normalized_message or "图片生成失败"
+
+
 def _parse_image_items(payload: Any) -> list[GeneratedImageAsset]:
     raw_items: list[Any] = []
     if isinstance(payload, dict):
@@ -85,65 +101,94 @@ async def generate_seedream_images(
     count: int = 1,
     size: str = DEFAULT_IMAGE_SIZE,
     user: str = "ai-commerce-assistant",
+    reference_images: list[str] | None = None,
 ) -> list[GeneratedImageAsset]:
     endpoint = resolve_image_endpoint(provider, api_endpoint)
     model = resolve_image_model(provider, model_name)
     if not endpoint:
         raise ValueError("请先配置生图 API 端点")
+    lower_endpoint = endpoint.strip().lower()
+    if (
+        lower_endpoint.endswith("/chat/completions")
+        or "/responses" in lower_endpoint
+        or "/contents/generations/tasks" in lower_endpoint
+    ):
+        raise ValueError("当前填写的不是生图接口，请在设置里把“人物图 生图模型”的 API 端点改成图片生成地址")
 
-    payload: dict[str, Any] = {
+    base_payload: dict[str, Any] = {
         "prompt": prompt.strip(),
         "n": max(1, min(4, int(count))),
-        "response_format": "url",
         "user": user,
     }
     resolved_size = (size or DEFAULT_IMAGE_SIZE).strip()
     if resolved_size:
-        payload["size"] = resolved_size
+        base_payload["size"] = resolved_size
     if model:
-        payload["model"] = model
+        base_payload["model"] = model
+
+    normalized_reference_images = [
+        str(item).strip()
+        for item in (reference_images or [])
+        if isinstance(item, str) and str(item).strip()
+    ][:4]
+    if len(normalized_reference_images) == 1:
+        base_payload["image"] = normalized_reference_images[0]
+    elif len(normalized_reference_images) > 1:
+        base_payload["image"] = normalized_reference_images
+
+    payload_variants: list[dict[str, Any]] = [
+        {**base_payload, "response_format": "b64_json"},
+        {**base_payload, "response_format": "url"},
+        {**base_payload},
+    ]
 
     last_error = "图片生成失败"
     timeout = httpx.Timeout(90.0, connect=20.0)
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                response = await client.post(
-                    endpoint,
-                    headers={
-                        "Authorization": f"Bearer {api_key.strip()}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                )
+    for payload in payload_variants:
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                    response = await client.post(
+                        endpoint,
+                        headers={
+                            "Authorization": f"Bearer {api_key.strip()}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                    )
 
-            if response.status_code >= 400:
-                try:
-                    error_body = response.json()
-                except Exception:
-                    error_body = response.text
-                message = _extract_error_message(error_body) or f"图片生成失败（HTTP {response.status_code}）"
-                if response.status_code >= 500 and attempt < MAX_RETRIES:
-                    last_error = message
-                    continue
-                raise ValueError(message)
+                if response.status_code >= 400:
+                    try:
+                        error_body = response.json()
+                    except Exception:
+                        error_body = response.text
+                    message = _extract_error_message(error_body) or f"图片生成失败（HTTP {response.status_code}）"
+                    last_error = _normalize_image_generation_error_message(message, endpoint)
+                    if response.status_code >= 500 and attempt < MAX_RETRIES:
+                        continue
+                    if response.status_code < 500:
+                        break
+                    raise ValueError(last_error)
 
-            data = response.json()
-            assets = _parse_image_items(data)
-            if assets:
-                return assets
-            raise ValueError("图片生成成功，但未返回图片结果")
-        except httpx.TimeoutException:
-            last_error = f"图片生成超时，第 {attempt} 次尝试失败"
-            if attempt >= MAX_RETRIES:
-                raise ValueError("图片生成超时，请稍后重试") from None
-        except httpx.HTTPError as error:
-            last_error = str(error) or "图片生成请求失败"
-            if attempt >= MAX_RETRIES:
-                raise ValueError(last_error) from error
-        except ValueError:
-            raise
+                data = response.json()
+                assets = _parse_image_items(data)
+                if assets:
+                    return assets
+                last_error = "图片生成成功，但未返回图片结果"
+                break
+            except httpx.TimeoutException:
+                last_error = f"图片生成超时，第 {attempt} 次尝试失败"
+                if attempt >= MAX_RETRIES:
+                    break
+            except httpx.HTTPError as error:
+                last_error = str(error) or "图片生成请求失败"
+                if attempt >= MAX_RETRIES:
+                    break
+            except ValueError:
+                raise
 
+    if "超时" in last_error:
+        raise ValueError("图片生成超时，请稍后重试") from None
     raise ValueError(last_error)
 
 

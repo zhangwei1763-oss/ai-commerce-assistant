@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Film, Image as ImageIcon, Loader2, Play, User, Users, X } from 'lucide-react';
+import { AlertCircle, Download, Film, History, Image as ImageIcon, Loader2, Play, Sparkles, Trash2, User, Users, X } from 'lucide-react';
 import type { GeneratedScript, Step1FormData, Step3VideoTask } from '../../App';
 import CharacterSelector from '../CharacterSelector';
 import { buildApiUrl, characterApi, type CharacterRecord } from '../../services/api';
@@ -11,6 +11,10 @@ type Step3Props = {
   videoApiKey?: string;
   videoApiEndpoint?: string;
   videoModelName?: string;
+  imageApiKey?: string;
+  imageApiProvider?: string;
+  imageApiEndpoint?: string;
+  imageModelName?: string;
   step1Data: Step1FormData;
   videoTasks: Step3VideoTask[];
   setVideoTasks: React.Dispatch<React.SetStateAction<Step3VideoTask[]>>;
@@ -40,6 +44,25 @@ type CharacterRefreshResult = {
   message: string;
 };
 
+type VideoTaskHistoryItem = Step3VideoTask & {
+  historyId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type FrameImageTask = {
+  scriptId: number;
+  scriptTitle: string;
+  status: 'idle' | 'processing' | 'completed' | 'failed';
+  imageUrl?: string;
+  prompt: string;
+  error?: string;
+  revisedPrompt?: string;
+  updatedAt: string;
+};
+
+const VIDEO_TASK_HISTORY_STORAGE_KEY = 'ai-helper-video-task-history';
+
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -66,12 +89,109 @@ function resolveDurationSeconds(script: ScriptItem) {
   return Math.min(60, Math.max(3, value));
 }
 
+function createTaskHistoryId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `task_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function readTaskHistory() {
+  if (typeof window === 'undefined') return [] as VideoTaskHistoryItem[];
+  try {
+    const raw = window.localStorage.getItem(VIDEO_TASK_HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as VideoTaskHistoryItem[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatHistoryTime(value?: string) {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('zh-CN');
+}
+
+function getTaskStatusLabel(status: Step3VideoTask['status']) {
+  if (status === 'completed') return '已完成';
+  if (status === 'failed') return '生成失败';
+  if (status === 'processing') return '生成中';
+  return '等待中';
+}
+
+function getTaskStatusClassName(status: Step3VideoTask['status']) {
+  if (status === 'completed') return 'bg-emerald-100 text-emerald-700';
+  if (status === 'failed') return 'bg-rose-100 text-rose-700';
+  if (status === 'processing') return 'bg-blue-100 text-blue-700';
+  return 'bg-slate-100 text-slate-600';
+}
+
+function buildFirstFramePrompt({
+  script,
+  step1Data,
+  renderStyle,
+  hasCharacter,
+  referenceCount,
+}: {
+  script: ScriptItem;
+  step1Data: Step1FormData;
+  renderStyle: string;
+  hasCharacter: boolean;
+  referenceCount: number;
+}) {
+  const audienceText = step1Data.targetAudiences.length ? step1Data.targetAudiences.join('、') : '全人群';
+  const scriptContent = script.prompt.replace(/\n{3,}/g, '\n\n').trim();
+  const referenceInstruction = hasCharacter
+    ? referenceCount > 1
+      ? '已提供人物图与多张产品图，请综合所有参考图，严格保持人物形象与产品外观一致。'
+      : '已提供人物图，请严格保持人物形象一致，同时准确还原产品外观。'
+    : referenceCount > 1
+      ? '已提供多张产品图，请综合所有产品参考图，严格保持产品外观、包装、颜色和材质一致。'
+      : '已提供产品参考图，请严格保持产品外观、包装、颜色和材质一致。';
+
+  return `
+你是一位电商短视频导演，现在要为一条带货视频生成“首帧图”，用于后续图生视频。
+
+目标：
+- 只生成 1 张竖屏 9:16 的首帧图
+- 首帧必须直接进入真实带货场景，不要出现拼贴、分屏、对比图、参考板、字幕、海报排版、边框、水印或任何文字
+- 画面要有短视频前 1 秒的抓人感，适合信息流停留
+- 构图优先使用半身近景、手持展示、产品特写或直播间/居家实景带货视角
+- 画面风格：${renderStyle}
+- ${referenceInstruction}
+
+产品信息：
+- 产品名称：${step1Data.productName || '未填写'}
+- 核心卖点：${step1Data.coreSellingPoints || '未填写'}
+- 主要痛点：${step1Data.painPoints || '未填写'}
+- 价格优势：${step1Data.priceAdvantage || '未填写'}
+- 目标人群：${audienceText}
+
+视频脚本标题：
+${script.title}
+
+视频脚本内容：
+${scriptContent || '未填写脚本内容'}
+
+输出要求：
+- 只输出一张完整首帧图
+- 人物表情自然、动作真实，产品主体清晰可见
+- 强调“正在真实展示/讲解产品”的瞬间，而不是静态商品海报
+- 如果脚本里有场景或镜头重点，请优先体现在首帧图中
+`.trim();
+}
+
 export default function Step3({
   onNext,
   generatedScripts,
   videoApiKey,
   videoApiEndpoint,
   videoModelName,
+  imageApiKey,
+  imageApiProvider,
+  imageApiEndpoint,
+  imageModelName,
   step1Data,
   videoTasks,
   setVideoTasks,
@@ -88,7 +208,77 @@ export default function Step3({
   const [characterMessage, setCharacterMessage] = useState('');
   const [characterMessageType, setCharacterMessageType] = useState<'success' | 'error' | ''>('');
   const [selectorScriptId, setSelectorScriptId] = useState<number | null>(null);
+  const [frameTasks, setFrameTasks] = useState<FrameImageTask[]>([]);
+  const [isBatchGeneratingFrames, setIsBatchGeneratingFrames] = useState(false);
+  const [frameMessage, setFrameMessage] = useState('');
+  const [frameMessageType, setFrameMessageType] = useState<'success' | 'error' | ''>('');
+  const [selectedVideoIds, setSelectedVideoIds] = useState<Set<number>>(new Set());
+  const [isBatchDownloading, setIsBatchDownloading] = useState(false);
+  const [downloadMessage, setDownloadMessage] = useState('');
+  const [downloadMessageType, setDownloadMessageType] = useState<'success' | 'error' | ''>('');
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [taskHistory, setTaskHistory] = useState<VideoTaskHistoryItem[]>(() => readTaskHistory());
+  const [isHistoryRefreshing, setIsHistoryRefreshing] = useState(false);
+  const [historyRefreshMessage, setHistoryRefreshMessage] = useState('');
+  const [historyRefreshMessageType, setHistoryRefreshMessageType] = useState<'success' | 'error' | ''>('');
   const productInputRef = useRef<HTMLInputElement>(null);
+  const knownDownloadableIdsRef = useRef<Set<number>>(new Set());
+
+  const applyTaskPatch = (task: Step3VideoTask, patch: Partial<Step3VideoTask>): Step3VideoTask => {
+    const createdAt = patch.createdAt ?? task.createdAt ?? new Date().toISOString();
+    return {
+      ...task,
+      ...patch,
+      historyId: patch.historyId ?? task.historyId ?? createTaskHistoryId(),
+      createdAt,
+      updatedAt: patch.updatedAt ?? new Date().toISOString(),
+    };
+  };
+
+  const applyHistoryPatch = (task: VideoTaskHistoryItem, patch: Partial<Step3VideoTask>): VideoTaskHistoryItem => {
+    const createdAt = task.createdAt || new Date().toISOString();
+    return {
+      ...task,
+      ...patch,
+      historyId: task.historyId,
+      createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+  };
+
+  const applyFrameTaskPatch = (task: FrameImageTask, patch: Partial<FrameImageTask>): FrameImageTask => ({
+    ...task,
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const upsertFrameTask = (script: ScriptItem, patch: Partial<FrameImageTask>) => {
+    setFrameTasks((prev) => {
+      const existing = prev.find((item) => item.scriptId === script.id);
+      if (existing) {
+        return prev.map((item) => (
+          item.scriptId === script.id
+            ? applyFrameTaskPatch(item, patch)
+            : item
+        ));
+      }
+
+      return [
+        ...prev,
+        {
+          scriptId: script.id,
+          scriptTitle: script.title,
+          status: 'idle',
+          prompt: patch.prompt || '',
+          imageUrl: '',
+          error: '',
+          revisedPrompt: '',
+          updatedAt: new Date().toISOString(),
+          ...patch,
+        },
+      ];
+    });
+  };
 
   const loadCharacters = async ({ manual = false }: { manual?: boolean } = {}): Promise<CharacterRefreshResult> => {
     setIsCharacterLoading(true);
@@ -106,7 +296,7 @@ export default function Step3({
       setSavedCharacters(nextItems);
       setCharacterSelections((prev) => {
         const nextState: Record<number, ScriptCharacterSelection | undefined> = {};
-        Object.entries(prev).forEach(([key, value]) => {
+        Object.entries(prev as Record<string, ScriptCharacterSelection | undefined>).forEach(([key, value]) => {
           if (value?.source === 'saved' && !nextIds.has(value.character.id)) {
             return;
           }
@@ -172,10 +362,19 @@ export default function Step3({
       const validIds = new Set(nextScripts.map((item) => item.id));
       return prev.filter((task) => validIds.has(task.scriptId));
     });
+    setFrameTasks((prev) => {
+      const validIds = new Set(nextScripts.map((item) => item.id));
+      return prev
+        .filter((task) => validIds.has(task.scriptId))
+        .map((task) => {
+          const matched = nextScripts.find((item) => item.id === task.scriptId);
+          return matched ? { ...task, scriptTitle: matched.title } : task;
+        });
+    });
     setCharacterSelections((prev) => {
       const validIds = new Set(nextScripts.map((item) => item.id));
       const nextState: Record<number, ScriptCharacterSelection | undefined> = {};
-      Object.entries(prev).forEach(([key, value]) => {
+      Object.entries(prev as Record<string, ScriptCharacterSelection | undefined>).forEach(([key, value]) => {
         const scriptId = Number(key);
         if (!validIds.has(scriptId)) {
           if (value?.source === 'upload') {
@@ -188,6 +387,8 @@ export default function Step3({
       return nextState;
     });
     setGenerateError('');
+    setFrameMessage('');
+    setFrameMessageType('');
   }, [generatedScripts, setVideoTasks]);
 
   useEffect(() => {
@@ -220,7 +421,7 @@ export default function Step3({
   useEffect(() => {
     return () => {
       productImages.forEach((img) => URL.revokeObjectURL(img.preview));
-      Object.values(characterSelections).forEach((item) => {
+      Object.values(characterSelections as Record<string, ScriptCharacterSelection | undefined>).forEach((item) => {
         if (item?.source === 'upload') {
           URL.revokeObjectURL(item.previewUrl);
         }
@@ -305,6 +506,120 @@ export default function Step3({
     };
   };
 
+  const resolveFrameReferenceImages = (scriptId: number) => {
+    const references: string[] = [];
+    const character = resolveCharacterReference(scriptId);
+    if (character?.imageUrl) {
+      references.push(character.imageUrl);
+    }
+
+    productImages.forEach((item) => {
+      if (item.base64) {
+        references.push(item.base64);
+      }
+    });
+
+    return Array.from(new Set(references)).filter(Boolean).slice(0, 4);
+  };
+
+  const generateFrameForScript = async (script: ScriptItem) => {
+    if (!imageApiKey?.trim()) {
+      throw new Error('请先在设置中配置并测试生图 API Key');
+    }
+    if (!imageApiEndpoint?.trim()) {
+      throw new Error('请先在设置中填写生图 API 端点');
+    }
+    if (!imageModelName?.trim()) {
+      throw new Error('请先在设置中填写生图模型名称');
+    }
+
+    const referenceImages = resolveFrameReferenceImages(script.id);
+    if (!referenceImages.length) {
+      throw new Error('请至少上传一张产品图，或为该脚本绑定人物图');
+    }
+
+    const prompt = buildFirstFramePrompt({
+      script,
+      step1Data,
+      renderStyle,
+      hasCharacter: Boolean(resolveCharacterReference(script.id)?.imageUrl),
+      referenceCount: referenceImages.length,
+    });
+
+    upsertFrameTask(script, {
+      status: 'processing',
+      prompt,
+      error: '',
+    });
+
+    const response = await fetch(buildApiUrl('/api/generate-frame-image'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiKey: imageApiKey,
+        provider: imageApiProvider,
+        apiEndpoint: imageApiEndpoint,
+        modelName: imageModelName,
+        prompt,
+        referenceImages,
+        scriptTitle: script.title,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data?.ok) {
+      throw new Error(data?.message || data?.detail || '首帧图生成失败');
+    }
+
+    upsertFrameTask(script, {
+      status: 'completed',
+      prompt,
+      imageUrl: String(data.imageUrl || ''),
+      revisedPrompt: String(data.revisedPrompt || ''),
+      error: '',
+    });
+  };
+
+  const handleBatchGenerateFrames = async () => {
+    if (isBatchGeneratingFrames) return;
+    if (!selectedScripts.length) {
+      setFrameMessageType('error');
+      setFrameMessage('请至少勾选一个脚本');
+      return;
+    }
+
+    setIsBatchGeneratingFrames(true);
+    setFrameMessage('');
+    setFrameMessageType('');
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const script of selectedScripts) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await generateFrameForScript(script);
+        successCount += 1;
+      } catch (error) {
+        failedCount += 1;
+        const message = error instanceof Error ? error.message : '首帧图生成失败';
+        upsertFrameTask(script, {
+          status: 'failed',
+          error: message,
+          prompt: frameTaskByScriptId.get(script.id)?.prompt || '',
+        });
+      }
+    }
+
+    setFrameMessageType(failedCount > 0 ? 'error' : 'success');
+    setFrameMessage(
+      failedCount > 0
+        ? `首帧图已生成 ${successCount} 张，失败 ${failedCount} 张`
+        : `已生成 ${successCount} 张首帧图，后续生成视频时会优先使用这些首帧图`,
+    );
+    setIsBatchGeneratingFrames(false);
+  };
+
   const handleStartGenerate = async () => {
     if (isGenerating) return;
     if (!selectedScripts.length) {
@@ -316,23 +631,31 @@ export default function Step3({
       return;
     }
 
-    const hasAnyImage = selectedScripts.some((script, index) => resolveVideoReferences(script.id, index).hasAny);
+    const hasAnyImage = selectedScripts.some((script, index) => {
+      const frameTask = frameTaskByScriptId.get(script.id);
+      return Boolean((frameTask?.status === 'completed' && frameTask.imageUrl) || resolveVideoReferences(script.id, index).hasAny);
+    });
     if (!hasAnyImage) {
-      setGenerateError('请至少上传产品图，或为脚本选择人物图');
+      setGenerateError('请先生成首帧图，或至少上传产品图 / 绑定人物图');
       return;
     }
 
     setGenerateError('');
     setIsGenerating(true);
-    setVideoTasks(
-      selectedScripts.map((script) => ({
-        scriptId: script.id,
-        scriptTitle: script.title,
-        taskId: '',
-        status: 'pending',
-        progress: 0,
-      })),
-    );
+    const startedAt = new Date().toISOString();
+    const pendingTasks = selectedScripts.map((script) => ({
+      scriptId: script.id,
+      scriptTitle: script.title,
+      taskId: '',
+      status: 'pending' as const,
+      progress: 0,
+      error: '',
+      historyId: createTaskHistoryId(),
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    }));
+    const pendingTaskMap = new Map<number, Step3VideoTask>(pendingTasks.map((task) => [task.scriptId, task] as const));
+    setVideoTasks(pendingTasks);
 
     try {
       const submittedTasks: Step3VideoTask[] = [];
@@ -342,13 +665,16 @@ export default function Step3({
         const script = selectedScripts[i];
         const prompt = normalizePrompt(script);
         const durationSeconds = resolveDurationSeconds(script);
+        const frameTask = frameTaskByScriptId.get(script.id);
+        const frameImageUrl = frameTask?.status === 'completed' ? String(frameTask.imageUrl || '').trim() : '';
         const references = resolveVideoReferences(script.id, i);
+        const shouldUseFrameImage = Boolean(frameImageUrl);
 
-        if (!references.hasAny) {
+        if (!shouldUseFrameImage && !references.hasAny) {
           const message = '请为该脚本选择人物图，或补充至少一张产品图';
           submissionErrors.push(`${script.title}: ${message}`);
           setVideoTasks((prev) => prev.map((task) => (
-            task.scriptId === script.id ? { ...task, status: 'failed', progress: 0, error: message } : task
+            task.scriptId === script.id ? applyTaskPatch(task, { status: 'failed', progress: 0, error: message }) : task
           )));
           continue;
         }
@@ -363,9 +689,9 @@ export default function Step3({
               modelName: videoModelName,
               prompt,
               style: renderStyle,
-              imageUrl: references.character?.imageUrl || references.product?.imageUrl || '',
-              characterImageUrl: references.character?.imageUrl || '',
-              productImageUrl: references.product?.imageUrl || '',
+              imageUrl: shouldUseFrameImage ? frameImageUrl : references.character?.imageUrl || references.product?.imageUrl || '',
+              characterImageUrl: shouldUseFrameImage ? '' : references.character?.imageUrl || '',
+              productImageUrl: shouldUseFrameImage ? '' : references.product?.imageUrl || '',
               durationSeconds,
             }),
           });
@@ -375,17 +701,22 @@ export default function Step3({
             throw new Error(data?.message || data?.detail || `脚本 ${script.title} 视频任务提交失败`);
           }
 
+          const baseTask = pendingTaskMap.get(script.id);
           submittedTasks.push({
             scriptId: script.id,
             scriptTitle: script.title,
             taskId: String(data.taskId || ''),
             status: 'processing',
             progress: 10,
+            error: '',
+            historyId: baseTask?.historyId,
+            createdAt: baseTask?.createdAt,
+            updatedAt: new Date().toISOString(),
           });
           setVideoTasks((prev) =>
             prev.map((task) =>
               task.scriptId === script.id
-                ? { ...task, status: 'processing', progress: 10, taskId: String(data.taskId || '') }
+                ? applyTaskPatch(task, { status: 'processing', progress: 10, taskId: String(data.taskId || ''), error: '' })
                 : task,
             ),
           );
@@ -395,7 +726,7 @@ export default function Step3({
           setVideoTasks((prev) =>
             prev.map((task) =>
               task.scriptId === script.id
-                ? { ...task, status: 'failed', progress: 0, error: message }
+                ? applyTaskPatch(task, { status: 'failed', progress: 0, error: message })
                 : task,
             ),
           );
@@ -407,17 +738,17 @@ export default function Step3({
         return;
       }
 
-      const startedAt = Date.now();
+      const pollingStartedAt = Date.now();
       const timeoutMs = 10 * 60 * 1000;
       let remaining = new Set(submittedTasks.map((task) => task.scriptId));
       let failedCount = submissionErrors.length;
 
       while (remaining.size > 0) {
-        if (Date.now() - startedAt > timeoutMs) {
+        if (Date.now() - pollingStartedAt > timeoutMs) {
           setVideoTasks((prev) =>
             prev.map((task) =>
               remaining.has(task.scriptId)
-                ? { ...task, status: 'failed', error: '生成超时，请稍后重试', progress: 0 }
+                ? applyTaskPatch(task, { status: 'failed', error: '生成超时，请稍后重试', progress: 0 })
                 : task,
             ),
           );
@@ -443,12 +774,11 @@ export default function Step3({
             setVideoTasks((prev) =>
               prev.map((item) =>
                 item.scriptId === task.scriptId
-                  ? {
-                      ...item,
+                  ? applyTaskPatch(item, {
                       status: 'failed',
                       progress: 0,
                       error: message,
-                    }
+                    })
                   : item,
               ),
             );
@@ -461,13 +791,12 @@ export default function Step3({
             setVideoTasks((prev) =>
               prev.map((item) =>
                 item.scriptId === task.scriptId
-                  ? {
-                      ...item,
+                  ? applyTaskPatch(item, {
                       status: 'completed',
                       progress: 100,
                       videoUrl: statusData.videoUrl || '',
                       error: '',
-                    }
+                    })
                   : item,
               ),
             );
@@ -477,12 +806,11 @@ export default function Step3({
             setVideoTasks((prev) =>
               prev.map((item) =>
                 item.scriptId === task.scriptId
-                  ? {
-                      ...item,
+                  ? applyTaskPatch(item, {
                       status: 'failed',
                       progress: 0,
                       error: statusData.error || '生成失败',
-                    }
+                    })
                   : item,
               ),
             );
@@ -490,11 +818,10 @@ export default function Step3({
             setVideoTasks((prev) =>
               prev.map((item) =>
                 item.scriptId === task.scriptId
-                  ? {
-                      ...item,
+                  ? applyTaskPatch(item, {
                       status: 'processing',
                       progress: Math.max(item.progress, Number(statusData.progress || 35)),
-                    }
+                    })
                   : item,
               ),
             );
@@ -519,6 +846,336 @@ export default function Step3({
     });
     return map;
   }, [videoTasks]);
+
+  const frameTaskByScriptId = useMemo(() => {
+    const map = new Map<number, FrameImageTask>();
+    frameTasks.forEach((task) => {
+      map.set(task.scriptId, task);
+    });
+    return map;
+  }, [frameTasks]);
+
+  const completedFrameCount = useMemo(
+    () => frameTasks.filter((task) => task.status === 'completed' && task.imageUrl).length,
+    [frameTasks],
+  );
+
+  const downloadableTasks = useMemo(() => selectedScripts
+    .map((script) => taskByScriptId.get(script.id))
+    .filter((task): task is Step3VideoTask => Boolean(task?.status === 'completed' && task.videoUrl)), [selectedScripts, taskByScriptId]);
+
+  const selectedDownloadableCount = downloadableTasks.filter((task) => selectedVideoIds.has(task.scriptId)).length;
+  const allDownloadableSelected = downloadableTasks.length > 0 && selectedDownloadableCount === downloadableTasks.length;
+  const refreshableHistoryTasks = useMemo(
+    () => taskHistory.filter((task) => (task.status === 'pending' || task.status === 'processing') && Boolean(task.taskId)),
+    [taskHistory],
+  );
+
+  useEffect(() => {
+    const validIds = new Set<number>(downloadableTasks.map((task) => task.scriptId));
+    const knownIds = knownDownloadableIdsRef.current;
+    setSelectedVideoIds((prev) => {
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (validIds.has(id)) {
+          next.add(id);
+        }
+      });
+      validIds.forEach((id) => {
+        if (!knownIds.has(id)) {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+    knownDownloadableIdsRef.current = new Set(validIds);
+  }, [downloadableTasks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || videoTasks.length === 0) return;
+
+    setTaskHistory((prev) => {
+      const historyMap = new Map<string, VideoTaskHistoryItem>(prev.map((item) => [item.historyId, item] as const));
+      videoTasks.forEach((task) => {
+        const historyId = task.historyId || createTaskHistoryId();
+        const previous = historyMap.get(historyId);
+        historyMap.set(historyId, {
+          ...previous,
+          ...task,
+          historyId,
+          createdAt: task.createdAt || previous?.createdAt || new Date().toISOString(),
+          updatedAt: task.updatedAt || new Date().toISOString(),
+        });
+      });
+
+      return Array.from(historyMap.values())
+        .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+        .slice(0, 100);
+    });
+  }, [videoTasks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(VIDEO_TASK_HISTORY_STORAGE_KEY, JSON.stringify(taskHistory));
+  }, [taskHistory]);
+
+  useEffect(() => {
+    if (!isHistoryOpen) return;
+    void refreshHistoryTasks({ silent: true });
+  }, [isHistoryOpen]);
+
+  useEffect(() => {
+    if (!isHistoryOpen || refreshableHistoryTasks.length === 0 || typeof window === 'undefined') {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      void refreshHistoryTasks({ silent: true });
+    }, 5000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [isHistoryOpen, refreshableHistoryTasks.length, taskHistory, videoApiKey]);
+
+  const toggleVideoSelection = (scriptId: number) => {
+    setSelectedVideoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(scriptId)) {
+        next.delete(scriptId);
+      } else {
+        next.add(scriptId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllVideos = () => {
+    setSelectedVideoIds(() => {
+      if (allDownloadableSelected) {
+        return new Set();
+      }
+      return new Set(downloadableTasks.map((task) => task.scriptId));
+    });
+  };
+
+  const getVideoExtension = (videoUrl: string) => {
+    try {
+      const pathname = new URL(videoUrl, window.location.href).pathname;
+      const ext = pathname.split('.').pop()?.toLowerCase();
+      if (ext && ext.length <= 5) {
+        return `.${ext}`;
+      }
+    } catch {
+      return '.mp4';
+    }
+    return '.mp4';
+  };
+
+  const buildVideoFilename = (task: Step3VideoTask) => {
+    const safeTitle = task.scriptTitle.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim() || `video-${task.scriptId}`;
+    return `${safeTitle}${getVideoExtension(task.videoUrl || '')}`;
+  };
+
+  const downloadVideo = async (task: Step3VideoTask) => {
+    if (!task.videoUrl) {
+      throw new Error(`${task.scriptTitle} 没有可下载地址`);
+    }
+
+    const anchor = document.createElement('a');
+    anchor.rel = 'noopener';
+
+    try {
+      const response = await fetch(task.videoUrl);
+      if (!response.ok) {
+        throw new Error(`${task.scriptTitle} 下载失败`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      anchor.href = objectUrl;
+      anchor.download = buildVideoFilename(task);
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      return;
+    } catch {
+      anchor.href = task.videoUrl;
+      anchor.target = '_blank';
+      anchor.download = buildVideoFilename(task);
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    const tasksToDownload = downloadableTasks.filter((task) => selectedVideoIds.has(task.scriptId));
+    if (!tasksToDownload.length) {
+      setDownloadMessageType('error');
+      setDownloadMessage('请先勾选至少一个已生成视频');
+      return;
+    }
+
+    setIsBatchDownloading(true);
+    setDownloadMessage('');
+    setDownloadMessageType('');
+
+    const failedTitles: string[] = [];
+
+    for (const task of tasksToDownload) {
+      try {
+        await downloadVideo(task);
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+      } catch {
+        failedTitles.push(task.scriptTitle);
+      }
+    }
+
+    if (failedTitles.length) {
+      setDownloadMessageType('error');
+      setDownloadMessage(`以下视频下载失败：${failedTitles.join('、')}`);
+    } else {
+      setDownloadMessageType('success');
+      setDownloadMessage(`已开始下载 ${tasksToDownload.length} 个视频`);
+    }
+
+    setIsBatchDownloading(false);
+  };
+
+  const refreshHistoryTasks = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (isHistoryRefreshing) return;
+
+    const tasksToRefresh = taskHistory.filter(
+      (task) => (task.status === 'pending' || task.status === 'processing') && Boolean(task.taskId),
+    );
+
+    if (!tasksToRefresh.length) {
+      if (!silent) {
+        setHistoryRefreshMessageType('success');
+        setHistoryRefreshMessage('当前没有需要刷新的历史任务');
+      }
+      return;
+    }
+
+    if (!videoApiKey?.trim()) {
+      setHistoryRefreshMessageType('error');
+      setHistoryRefreshMessage('请先在设置中配置视频 API Key，再刷新历史任务');
+      return;
+    }
+
+    if (!silent) {
+      setHistoryRefreshMessage('');
+      setHistoryRefreshMessageType('');
+    }
+
+    setIsHistoryRefreshing(true);
+
+    const updates: VideoTaskHistoryItem[] = [];
+    let completedCount = 0;
+    let processingCount = 0;
+    let failedCount = 0;
+
+    try {
+      for (const task of tasksToRefresh) {
+        try {
+          const response = await fetch(buildApiUrl('/api/video-status'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey: videoApiKey, taskId: task.taskId }),
+          });
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok || !data?.ok) {
+            const message = data?.message || data?.detail || '历史任务状态查询失败';
+            updates.push(applyHistoryPatch(task, { status: 'failed', progress: 0, error: message }));
+            failedCount += 1;
+            continue;
+          }
+
+          const status = String(data.status || '').toLowerCase();
+          if (status === 'completed') {
+            updates.push(
+              applyHistoryPatch(task, {
+                status: 'completed',
+                progress: 100,
+                videoUrl: String(data.videoUrl || task.videoUrl || ''),
+                error: '',
+              }),
+            );
+            completedCount += 1;
+          } else if (status === 'failed') {
+            updates.push(
+              applyHistoryPatch(task, {
+                status: 'failed',
+                progress: 0,
+                error: String(data.error || data.message || '生成失败'),
+              }),
+            );
+            failedCount += 1;
+          } else {
+            updates.push(
+              applyHistoryPatch(task, {
+                status: 'processing',
+                progress: Math.max(task.progress, Number(data.progress || 35)),
+                error: '',
+              }),
+            );
+            processingCount += 1;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '历史任务状态查询失败';
+          updates.push(applyHistoryPatch(task, { status: 'failed', progress: 0, error: message }));
+          failedCount += 1;
+        }
+      }
+
+      if (updates.length > 0) {
+        const updateMap = new Map<string, VideoTaskHistoryItem>(updates.map((task) => [task.historyId, task] as const));
+
+        setTaskHistory((prev) =>
+          prev
+            .map((task) => updateMap.get(task.historyId) || task)
+            .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+            .slice(0, 100),
+        );
+
+        setVideoTasks((prev) =>
+          prev.map((task) => {
+            const matchedHistoryTask = (task.historyId && updateMap.get(task.historyId))
+              || updates.find((item) => item.taskId && item.taskId === task.taskId);
+            if (!matchedHistoryTask) return task;
+            return applyTaskPatch(task, {
+              status: matchedHistoryTask.status,
+              progress: matchedHistoryTask.progress,
+              videoUrl: matchedHistoryTask.videoUrl,
+              error: matchedHistoryTask.error,
+              taskId: matchedHistoryTask.taskId,
+            });
+          }),
+        );
+      }
+
+      if (!silent) {
+        setHistoryRefreshMessageType('success');
+        setHistoryRefreshMessage(
+          `已刷新 ${tasksToRefresh.length} 个任务：${completedCount} 个完成，${processingCount} 个生成中，${failedCount} 个失败`,
+        );
+      }
+    } finally {
+      setIsHistoryRefreshing(false);
+    }
+  };
+
+  const handleClearTaskHistory = () => {
+    setTaskHistory([]);
+    setHistoryRefreshMessage('');
+    setHistoryRefreshMessageType('');
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(VIDEO_TASK_HISTORY_STORAGE_KEY);
+    }
+  };
 
   const selectorSelection = selectorScriptId ? characterSelections[selectorScriptId] || null : null;
 
@@ -684,6 +1341,40 @@ export default function Step3({
                 </div>
               )}
             </div>
+
+            <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-amber-900">首帧图生成</div>
+                  <div className="mt-1 text-xs leading-5 text-amber-800">
+                    先根据脚本和参考图批量生成首帧图，再去生成视频。后续视频生成会优先使用首帧图作为图生视频输入源。
+                  </div>
+                  <div className="mt-2 text-[11px] leading-5 text-amber-700">
+                    当前生图模型：{imageModelName || '未配置'}。
+                    单张效果不满意时可在卡片里单独重生；单图重生更适合 1.5 类模型，人物图 + 多张产品图参考时更建议使用 2.0 类模型。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { void handleBatchGenerateFrames(); }}
+                  disabled={isBatchGeneratingFrames || selectedCount === 0}
+                  className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isBatchGeneratingFrames ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  {isBatchGeneratingFrames ? '批量生成中...' : '批量生成首帧图'}
+                </button>
+              </div>
+              {frameMessage && (
+                <div className={`mt-3 rounded-lg px-3 py-2 text-xs ${
+                  frameMessageType === 'error' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
+                }`}>
+                  {frameMessage}
+                </div>
+              )}
+              <div className="mt-3 text-xs text-amber-800">
+                已生成首帧图 {completedFrameCount}/{selectedCount || scripts.length || 0} 张
+              </div>
+            </div>
           </div>
 
           <div className="mt-auto pt-4 border-t border-gray-100">
@@ -727,9 +1418,41 @@ export default function Step3({
       </div>
 
       <div className="bg-card rounded-lg shadow-sm border border-gray-200 flex flex-col min-h-0">
-        <div className="p-4 border-b border-gray-100 bg-gray-50 rounded-t-lg flex justify-between items-center">
-          <h3 className="text-subtitle">视频预览区</h3>
-          <span className="text-xs text-gray-500">按脚本展示生成进度与视频结果</span>
+        <div className="p-4 border-b border-gray-100 bg-gray-50 rounded-t-lg flex flex-wrap justify-between items-center gap-3">
+          <div>
+            <h3 className="text-subtitle">视频预览区</h3>
+            <span className="text-xs text-gray-500">按脚本展示生成进度与视频结果</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-500">
+              已选 {selectedDownloadableCount}/{downloadableTasks.length} 个成片
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsHistoryOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+            >
+              <History className="w-3.5 h-3.5" />
+              历史任务
+            </button>
+            <button
+              type="button"
+              onClick={toggleSelectAllVideos}
+              disabled={downloadableTasks.length === 0}
+              className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {allDownloadableSelected ? '取消全选' : '全选成片'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { void handleBatchDownload(); }}
+              disabled={selectedDownloadableCount === 0 || isBatchDownloading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-gray-900 text-white hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {isBatchDownloading ? '下载中...' : '批量下载'}
+            </button>
+          </div>
         </div>
 
         <div className="p-4 overflow-y-auto max-h-[460px] pr-2">
@@ -738,20 +1461,61 @@ export default function Step3({
           ) : selectedCount === 0 ? (
             <div className="h-full flex items-center justify-center text-sm text-gray-400">请先勾选脚本</div>
           ) : (
-            <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-3">
+              {downloadMessage && (
+                <div className={`rounded-lg px-3 py-2 text-xs ${
+                  downloadMessageType === 'error' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                }`}>
+                  {downloadMessage}
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-4">
               {selectedScripts.map((script, index) => {
                 const task = taskByScriptId.get(script.id);
+                const frameTask = frameTaskByScriptId.get(script.id);
                 const selection = characterSelections[script.id];
                 const characterReference = resolveCharacterReference(script.id);
                 const productReference = resolveProductReference(index);
+                const isSelectableVideo = Boolean(task?.status === 'completed' && task.videoUrl);
+                const isVideoSelected = selectedVideoIds.has(script.id);
                 return (
                   <div key={script.id} className="border border-gray-200 rounded-lg overflow-hidden">
                     <div className="aspect-[9/16] bg-gray-100 relative flex items-center justify-center">
+                      {isSelectableVideo && (
+                        <label className="absolute left-3 top-3 z-10 inline-flex items-center gap-2 rounded-full bg-white/90 px-2 py-1 text-[11px] text-gray-700 shadow-sm">
+                          <input
+                            type="checkbox"
+                            checked={isVideoSelected}
+                            onChange={() => toggleVideoSelection(script.id)}
+                            className="rounded text-accent focus:ring-accent"
+                          />
+                          选中
+                        </label>
+                      )}
                       {!task && (
-                        <div className="flex flex-col items-center text-gray-400">
-                          <Film className="w-10 h-10 mb-2" />
-                          <span className="text-xs">待渲染</span>
-                        </div>
+                        <>
+                          {frameTask?.status === 'processing' && (
+                            <div className="flex flex-col items-center text-amber-600">
+                              <Loader2 className="w-8 h-8 animate-spin mb-2" />
+                              <span className="text-xs">首帧图生成中</span>
+                            </div>
+                          )}
+                          {frameTask?.status === 'failed' && (
+                            <div className="p-3 text-center text-amber-700 text-xs">
+                              <AlertCircle className="w-5 h-5 mx-auto mb-1" />
+                              {frameTask.error || '首帧图生成失败'}
+                            </div>
+                          )}
+                          {frameTask?.status === 'completed' && frameTask.imageUrl && (
+                            <img src={frameTask.imageUrl} alt={`${script.title} 首帧图`} className="w-full h-full object-cover" />
+                          )}
+                          {!frameTask && (
+                            <div className="flex flex-col items-center text-gray-400">
+                              <Film className="w-10 h-10 mb-2" />
+                              <span className="text-xs">待生成首帧图</span>
+                            </div>
+                          )}
+                        </>
                       )}
                       {task?.status === 'processing' && (
                         <div className="flex flex-col items-center text-gray-600">
@@ -776,6 +1540,40 @@ export default function Step3({
                     </div>
                     <div className="p-2 bg-white text-xs border-t border-gray-100">
                       <div className="truncate text-center">{script.title}</div>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void generateFrameForScript(script).catch((error) => {
+                              const message = error instanceof Error ? error.message : '首帧图生成失败';
+                              upsertFrameTask(script, {
+                                status: 'failed',
+                                error: message,
+                                prompt: frameTask?.prompt || '',
+                              });
+                              setFrameMessageType('error');
+                              setFrameMessage(`${script.title}：${message}`);
+                            });
+                          }}
+                          disabled={frameTask?.status === 'processing'}
+                          className="flex-1 rounded-lg bg-amber-100 px-2 py-1.5 text-[11px] font-medium text-amber-800 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {frameTask?.status === 'processing'
+                            ? '首帧图生成中...'
+                            : frameTask?.status === 'completed'
+                              ? '重新生成首帧图'
+                              : '生成首帧图'}
+                        </button>
+                        {frameTask?.status === 'completed' && frameTask.imageUrl && (
+                          <button
+                            type="button"
+                            onClick={() => window.open(frameTask.imageUrl, '_blank', 'noopener,noreferrer')}
+                            className="rounded-lg bg-gray-100 px-2 py-1.5 text-[11px] font-medium text-gray-700 hover:bg-gray-200"
+                          >
+                            查看
+                          </button>
+                        )}
+                      </div>
                       <div className="mt-1 flex items-center gap-1 text-gray-500 truncate">
                         <User className="w-3.5 h-3.5 flex-shrink-0" />
                         <span className="truncate">
@@ -792,10 +1590,21 @@ export default function Step3({
                           {productReference?.label || (characterReference ? '未设置产品图，将仅使用人物图' : '未设置产品图')}
                         </span>
                       </div>
+                      {frameTask?.status === 'completed' && (
+                        <div className="mt-1 truncate text-[11px] text-emerald-600">
+                          已生成首帧图，生成视频时会优先使用
+                        </div>
+                      )}
+                      {frameTask?.status === 'failed' && frameTask.error && (
+                        <div className="mt-1 line-clamp-2 text-[11px] text-rose-600">
+                          首帧图失败：{frameTask.error}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
+              </div>
             </div>
           )}
         </div>
@@ -837,6 +1646,101 @@ export default function Step3({
           }
         }}
       />
+
+      {isHistoryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-4xl max-h-[80vh] overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">历史任务</h3>
+                <p className="text-sm text-gray-500 mt-1">查看本机已经运行过的视频任务，并向服务器补查仍在生成中的任务状态。</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { void refreshHistoryTasks(); }}
+                  disabled={isHistoryRefreshing || refreshableHistoryTasks.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isHistoryRefreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <History className="w-4 h-4" />}
+                  {isHistoryRefreshing ? '刷新中...' : '刷新状态'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearTaskHistory}
+                  disabled={taskHistory.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  清空历史
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryOpen(false)}
+                  className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-[calc(80vh-88px)] overflow-y-auto px-6 py-5">
+              {historyRefreshMessage && (
+                <div className={`mb-4 rounded-xl px-3 py-2 text-xs ${
+                  historyRefreshMessageType === 'error' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
+                }`}>
+                  {historyRefreshMessage}
+                </div>
+              )}
+              {taskHistory.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-300 px-6 py-14 text-center text-sm text-gray-400">
+                  还没有历史任务记录
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {taskHistory.map((task) => (
+                    <div key={task.historyId} className="rounded-2xl border border-gray-200 px-4 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-medium text-gray-900">{task.scriptTitle}</div>
+                            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${getTaskStatusClassName(task.status)}`}>
+                              {getTaskStatusLabel(task.status)}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-gray-500 md:grid-cols-2">
+                            <div>任务ID：{task.taskId || '-'}</div>
+                            <div>进度：{task.progress}%</div>
+                            <div>创建时间：{formatHistoryTime(task.createdAt)}</div>
+                            <div>最近更新：{formatHistoryTime(task.updatedAt)}</div>
+                          </div>
+                          {task.error && (
+                            <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-600">
+                              {task.error}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          {task.videoUrl && (
+                            <button
+                              type="button"
+                              onClick={() => { void downloadVideo(task); }}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white hover:bg-black"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              下载视频
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

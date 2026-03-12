@@ -27,6 +27,7 @@ type ModalMode = 'add' | 'edit' | null;
 
 export default function UserDashboard() {
   const { user, logout } = useAuth();
+  const userLabel = user?.display_name || user?.license_key_name || user?.license_key_masked || user?.email;
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [modalMode, setModalMode] = useState<ModalMode>(null);
@@ -136,7 +137,7 @@ export default function UserDashboard() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">用户后台</h1>
             <p className="text-gray-500 mt-1">
-              {user?.email} {user?.is_admin && <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">管理员</span>}
+              {userLabel} {user?.is_admin && <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">管理员</span>}
             </p>
           </div>
           <button

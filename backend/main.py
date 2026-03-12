@@ -47,6 +47,7 @@ from services.test_service    import router as test_router
 from services.video_generate_service import router as video_generate_router
 from services.frontend_ai_router import router as frontend_ai_router
 from services.character_service import router as character_router
+from services.frame_image_service import router as frame_image_router
 from services.storage_service import storage_service
 
 # 认证和用户路由
@@ -75,6 +76,9 @@ app.include_router(video_generate_router, prefix="/api", tags=["前端视频生�
 
 # 前端脚本生成与爆款分析接口（兼容格式）
 app.include_router(frontend_ai_router, prefix="/api", tags=["前端AI生成"])
+
+# 前端首帧图生成接口
+app.include_router(frame_image_router, prefix="/api", tags=["前端首帧图生成"])
 
 # 人物图片管理
 app.include_router(character_router)

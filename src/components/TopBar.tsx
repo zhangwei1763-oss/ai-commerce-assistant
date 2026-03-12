@@ -17,6 +17,7 @@ export default function TopBar({
   title?: string;
 }) {
   const { user, logout } = useAuth();
+  const userLabel = user?.display_name || user?.license_key_name || user?.license_key_masked || user?.email || '未登录';
 
   return (
     <div className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm z-10">
@@ -27,7 +28,7 @@ export default function TopBar({
       </div>
 
       <div className="flex items-center space-x-2">
-        <span className="text-sm text-gray-500 max-w-[220px] truncate">{user?.email}</span>
+        <span className="text-sm text-gray-500 max-w-[220px] truncate">{userLabel}</span>
         <button
           type="button"
           onClick={() => window.location.reload()}

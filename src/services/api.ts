@@ -3,12 +3,20 @@
  * 统一处理认证、错误、token 刷新等
  */
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+function resolveApiBaseUrl() {
+  const desktopApiBaseUrl =
+    typeof window !== 'undefined'
+      ? window.desktopConfig?.apiBaseUrl?.trim()
+      : '';
+  const apiBaseUrl = desktopApiBaseUrl || import.meta.env.VITE_API_URL || '';
+  return apiBaseUrl.replace(/\/$/, '');
+}
 
 export function buildApiUrl(endpoint: string) {
   if (/^https?:\/\//.test(endpoint)) return endpoint;
+  const apiBaseUrl = resolveApiBaseUrl();
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  return `${API_BASE_URL}${normalizedEndpoint}`;
+  return apiBaseUrl ? `${apiBaseUrl}${normalizedEndpoint}` : normalizedEndpoint;
 }
 
 export function resolveAssetUrl(value: string) {
@@ -98,10 +106,14 @@ export interface CharacterGroupRecord {
 export interface AdminUserRecord {
   id: string;
   email: string;
+  display_name?: string;
   username?: string;
   phone?: string;
   is_active: boolean;
   is_admin: boolean;
+  license_key_masked?: string;
+  license_key_name?: string;
+  license_key_expires_at?: string;
   created_at: string;
   last_login?: string;
 }
@@ -111,6 +123,30 @@ export interface AdminUserStats {
   active_users: number;
   admin_users: number;
   new_users_today: number;
+  total_license_keys: number;
+  active_license_keys: number;
+  disabled_license_keys: number;
+  used_license_keys: number;
+  expired_license_keys: number;
+}
+
+export interface LicenseKeyRecord {
+  id: string;
+  card_key: string;
+  masked_card_key: string;
+  name?: string;
+  note?: string;
+  status: 'active' | 'disabled';
+  duration_days?: number | null;
+  expires_at?: string | null;
+  activated_at?: string | null;
+  last_used_at?: string | null;
+  activation_count: number;
+  is_admin: boolean;
+  bound_user_id?: string | null;
+  bound_user_display_name?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 async function request<T>(
@@ -162,24 +198,10 @@ async function request<T>(
 
 // 认证 API
 export const authApi = {
-  sendEmailCode: async (email: string) => {
-    return request('/api/auth/send-email-code', {
+  login: async (card_key: string) => {
+    return request('/api/auth/card-login', {
       method: 'POST',
-      body: JSON.stringify({ email }),
-    });
-  },
-
-  register: async (email: string, code: string, password: string, username?: string) => {
-    return request('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ email, code, password, username }),
-    });
-  },
-
-  login: async (email: string, password: string) => {
-    return request('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ card_key }),
     });
   },
 
@@ -389,6 +411,42 @@ export const adminApi = {
 
   deleteUser: async (userId: string) => {
     return request(`/api/admin/users/${userId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  listLicenseKeys: async () => {
+    return request<LicenseKeyRecord[]>('/api/admin/license-keys');
+  },
+
+  generateLicenseKeys: async (data: {
+    quantity: number;
+    name_prefix?: string;
+    duration_days?: number;
+    note?: string;
+    is_admin?: boolean;
+  }) => {
+    return request<{ ok: boolean; items: LicenseKeyRecord[] }>('/api/admin/license-keys/generate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateLicenseKey: async (licenseKeyId: string, data: {
+    name?: string;
+    note?: string;
+    status?: 'active' | 'disabled';
+    duration_days?: number;
+    is_admin?: boolean;
+  }) => {
+    return request<LicenseKeyRecord>(`/api/admin/license-keys/${licenseKeyId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteLicenseKey: async (licenseKeyId: string) => {
+    return request(`/api/admin/license-keys/${licenseKeyId}`, {
       method: 'DELETE',
     });
   },

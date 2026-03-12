@@ -238,6 +238,31 @@ def build_openai_messages(prompt: str, image_data_urls: list[str] | None = None)
     return [{"role": "user", "content": content}]
 
 
+def build_responses_input(prompt: str, image_data_urls: list[str] | None = None) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [
+        {
+            "type": "input_text",
+            "text": prompt,
+        }
+    ]
+
+    for image_url in (image_data_urls or [])[:3]:
+        if not isinstance(image_url, str) or not image_url.startswith("data:image/"):
+            continue
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": image_url,
+            }
+        )
+
+    return [{"role": "user", "content": content}]
+
+
+def is_responses_endpoint(endpoint: str) -> bool:
+    return "/responses" in endpoint.lower()
+
+
 async def post_chat_completion(
     *,
     api_key: str,
@@ -246,10 +271,16 @@ async def post_chat_completion(
     prompt: str,
     image_data_urls: list[str] | None = None,
 ) -> str:
-    payload = {
-        "model": model_name,
-        "messages": build_openai_messages(prompt, image_data_urls),
-    }
+    if is_responses_endpoint(endpoint):
+        payload = {
+            "model": model_name,
+            "input": build_responses_input(prompt, image_data_urls),
+        }
+    else:
+        payload = {
+            "model": model_name,
+            "messages": build_openai_messages(prompt, image_data_urls),
+        }
 
     timeout = httpx.Timeout(1800.0, connect=30.0)
     async with httpx.AsyncClient(timeout=timeout) as client:

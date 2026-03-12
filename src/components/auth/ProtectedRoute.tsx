@@ -4,8 +4,9 @@
  */
 
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { isDesktopClient } from '../../lib/runtimeMode';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -14,6 +15,8 @@ interface ProtectedRouteProps {
 
 export default function ProtectedRoute({ children, requireAdmin = false }: ProtectedRouteProps) {
   const { user, isLoading } = useAuth();
+  const location = useLocation();
+  const desktopMode = isDesktopClient();
 
   if (isLoading) {
     return (
@@ -24,7 +27,12 @@ export default function ProtectedRoute({ children, requireAdmin = false }: Prote
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    const redirectTo = `${location.pathname}${location.search}${location.hash}`;
+    const params = new URLSearchParams({ redirect: redirectTo });
+    if (desktopMode) {
+      params.set('mode', 'desktop');
+    }
+    return <Navigate to={`/login?${params.toString()}`} replace />;
   }
 
   if (requireAdmin && !user.is_admin) {

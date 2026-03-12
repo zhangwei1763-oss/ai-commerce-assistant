@@ -362,7 +362,11 @@ export default function SettingsModal({
   const resetPreset = (capability: ApiCapability, provider: string) => {
     const preset = getProviderPreset(provider, capability);
     if (!preset) return;
-    const updater = capability === 'text' ? setDraftTextConfig : setDraftVideoConfig;
+    const updater = capability === 'text'
+      ? setDraftTextConfig
+      : capability === 'video'
+        ? setDraftVideoConfig
+        : setDraftImageConfig;
     updater((prev) => ({
       ...prev,
       apiEndpoint: preset.recommendedEndpoint,
@@ -375,8 +379,8 @@ export default function SettingsModal({
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>
-            <h2 className="text-lg font-semibold text-gray-800">模型与 API 配置</h2>
-            <p className="text-sm text-gray-500 mt-1">每条工作流都需要提供商、模型名称、API 端点和 API Key 一起匹配。</p>
+            <h2 className="text-lg font-semibold text-gray-800">接入你自己的 AI API</h2>
+            <p className="text-sm text-gray-500 mt-1">卡密只负责软件授权，AI 调用额度和费用由你自己的 API Key 决定。</p>
           </div>
           <button
             type="button"
@@ -441,7 +445,7 @@ export default function SettingsModal({
 
         <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
           <div className="text-xs text-gray-500">
-            保存后会加密写入数据库，登录后自动回填到当前用户配置。
+            保存后会加密写入当前账号，后续登录桌面客户端会自动回填。
           </div>
           <button
             type="button"

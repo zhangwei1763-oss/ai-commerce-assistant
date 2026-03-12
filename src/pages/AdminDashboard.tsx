@@ -1,72 +1,65 @@
-/**
- * 管理员后台页面
- * 管理用户账号、权限，以及当前管理员自己的 API Key 和提示词模板。
- */
-
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
   adminApi,
-  userApi,
-  type AdminUserRecord,
   type AdminUserStats,
-  type PromptTemplateRecord,
-  type StoredApiKey,
+  type LicenseKeyRecord,
 } from '../services/api';
-import {
-  getProviderDisplayName,
-  TEXT_PROVIDER_PRESETS,
-  VIDEO_PROVIDER_PRESETS,
-} from '../lib/providerCatalog';
 
-type ApiKeyModalMode = 'add' | 'edit' | null;
-type TemplateModalMode = 'add' | 'edit' | null;
+type StatusFilter = 'all' | 'active' | 'disabled';
 
-const providerColors: Record<string, string> = {
-  GEMINI: 'bg-blue-100 text-blue-800',
-  DOUBAO: 'bg-green-100 text-green-800',
-  SILICONFLOW: 'bg-cyan-100 text-cyan-800',
-  ALIYUN_BAILIAN: 'bg-orange-100 text-orange-800',
-  OPENAI: 'bg-emerald-100 text-emerald-800',
-  DEEPSEEK: 'bg-indigo-100 text-indigo-800',
-  CUSTOM_TEXT: 'bg-slate-100 text-slate-800',
-  SEEDANCE: 'bg-purple-100 text-purple-800',
-  CUSTOM_VIDEO: 'bg-pink-100 text-pink-800',
-};
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('zh-CN');
+}
+
+function fallbackCopyText(text: string) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+
+  const selection = document.getSelection();
+  const originalRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+  textarea.focus();
+  textarea.select();
+
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+
+  if (selection) {
+    selection.removeAllRanges();
+    if (originalRange) {
+      selection.addRange(originalRange);
+    }
+  }
+
+  return copied;
+}
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
-  const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const adminLabel = user?.display_name || user?.license_key_name || user?.license_key_masked || user?.email || '管理员';
   const [stats, setStats] = useState<AdminUserStats | null>(null);
-  const [isUserLoading, setIsUserLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<boolean | null>(true);
-
-  const [apiKeys, setApiKeys] = useState<StoredApiKey[]>([]);
-  const [isApiKeysLoading, setIsApiKeysLoading] = useState(true);
-  const [apiKeyModalMode, setApiKeyModalMode] = useState<ApiKeyModalMode>(null);
-  const [provider, setProvider] = useState('DOUBAO');
-  const [apiKeyValue, setApiKeyValue] = useState('');
-  const [apiEndpoint, setApiEndpoint] = useState('');
-  const [modelName, setModelName] = useState('');
-
-  const [templates, setTemplates] = useState<PromptTemplateRecord[]>([]);
-  const [isTemplatesLoading, setIsTemplatesLoading] = useState(true);
-  const [templateModalMode, setTemplateModalMode] = useState<TemplateModalMode>(null);
-  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
-  const [templateName, setTemplateName] = useState('');
-  const [templateContent, setTemplateContent] = useState('');
-
+  const [licenseKeys, setLicenseKeys] = useState<LicenseKeyRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+
+  const [generateQuantity, setGenerateQuantity] = useState(10);
+  const [licenseNamePrefix, setLicenseNamePrefix] = useState('');
+  const [licenseDurationDays, setLicenseDurationDays] = useState('30');
+  const [licenseNote, setLicenseNote] = useState('');
+  const [generateAdminKeys, setGenerateAdminKeys] = useState(false);
 
   useEffect(() => {
-    void loadUserData();
-  }, [statusFilter]);
-
-  useEffect(() => {
-    void loadOwnApiKeys();
-    void loadOwnPromptTemplates();
+    void loadData();
   }, []);
 
   const showMessage = (type: 'success' | 'error', text: string) => {
@@ -74,240 +67,160 @@ export default function AdminDashboard() {
     window.setTimeout(() => setMessage(null), 3000);
   };
 
-  const loadUserData = async () => {
-    setIsUserLoading(true);
+  const loadData = async () => {
+    setIsLoading(true);
     try {
-      const usersRes = await adminApi.listUsers({
-        limit: 100,
-        is_active: typeof statusFilter === 'boolean' ? statusFilter : undefined,
-      });
-      if (usersRes.ok && Array.isArray(usersRes.data)) {
-        setUsers(usersRes.data as AdminUserRecord[]);
+      const [statsRes, keysRes] = await Promise.all([
+        adminApi.getStats(),
+        adminApi.listLicenseKeys(),
+      ]);
+
+      if (!statsRes.ok) {
+        throw new Error(statsRes.message || '统计数据加载失败');
       }
 
-      const statsRes = await adminApi.getStats();
+      if (!keysRes.ok) {
+        throw new Error(keysRes.message || '卡密列表加载失败');
+      }
+
       if (statsRes.ok && statsRes.data) {
         setStats(statsRes.data as AdminUserStats);
       }
-    } finally {
-      setIsUserLoading(false);
-    }
-  };
 
-  const loadOwnApiKeys = async () => {
-    setIsApiKeysLoading(true);
-    const response = await userApi.listApiKeys();
-    if (response.ok && Array.isArray(response.data)) {
-      setApiKeys(response.data as StoredApiKey[]);
-    } else {
-      setApiKeys([]);
-    }
-    setIsApiKeysLoading(false);
-  };
-
-  const loadOwnPromptTemplates = async () => {
-    setIsTemplatesLoading(true);
-    const response = await userApi.listPromptTemplates();
-    if (response.ok && Array.isArray(response.data)) {
-      setTemplates(response.data as PromptTemplateRecord[]);
-    } else {
-      setTemplates([]);
-    }
-    setIsTemplatesLoading(false);
-  };
-
-  const handleToggleStatus = async (userId: string, currentStatus: boolean) => {
-    if (!confirm(`确定要${currentStatus ? '禁用' : '启用'}此用户吗？`)) return;
-
-    const res = await adminApi.updateUser(userId, {
-      is_active: !currentStatus,
-    });
-
-    if (res.ok) {
-      showMessage('success', `用户已${currentStatus ? '禁用' : '启用'}`);
-      void loadUserData();
-    } else {
-      showMessage('error', res.message || '操作失败');
-    }
-  };
-
-  const handleToggleAdmin = async (userId: string, currentIsAdmin: boolean) => {
-    if (!confirm(`确定要${currentIsAdmin ? '取消' : '设置为'}管理员权限吗？`)) return;
-
-    const res = await adminApi.updateUser(userId, {
-      is_admin: !currentIsAdmin,
-    });
-
-    if (res.ok) {
-      showMessage('success', currentIsAdmin ? '已取消管理员权限' : '已设为管理员');
-      void loadUserData();
-    } else {
-      showMessage('error', res.message || '操作失败');
-    }
-  };
-
-  const handleDeleteUser = async (userId: string, email: string) => {
-    if (!confirm(`确定要删除用户 ${email} 吗？此操作不可恢复！`)) return;
-
-    const res = await adminApi.deleteUser(userId);
-    if (res.ok) {
-      showMessage('success', '用户已删除');
-      void loadUserData();
-    } else {
-      showMessage('error', res.message || '删除失败');
-    }
-  };
-
-  const handleAddApiKey = () => {
-    setProvider('DOUBAO');
-    setApiKeyValue('');
-    setApiEndpoint('');
-    setModelName('');
-    setApiKeyModalMode('add');
-  };
-
-  const handleEditApiKey = (key: StoredApiKey) => {
-    setProvider(key.provider);
-    setApiKeyValue(key.api_key);
-    setApiEndpoint(key.api_endpoint || '');
-    setModelName(key.model_name || '');
-    setApiKeyModalMode('edit');
-  };
-
-  const closeApiKeyModal = () => {
-    setApiKeyModalMode(null);
-    setProvider('DOUBAO');
-    setApiKeyValue('');
-    setApiEndpoint('');
-    setModelName('');
-  };
-
-  const handleSaveApiKey = async () => {
-    if (!apiKeyValue.trim()) {
-      showMessage('error', '请输入 API Key');
-      return;
-    }
-
-    const response = await userApi.createApiKey({
-      provider: provider.toUpperCase(),
-      api_key: apiKeyValue.trim(),
-      api_endpoint: apiEndpoint.trim() || undefined,
-      model_name: modelName.trim() || undefined,
-    });
-
-    if (response.ok) {
-      showMessage('success', 'API Key 保存成功');
-      closeApiKeyModal();
-      void loadOwnApiKeys();
-    } else {
-      showMessage('error', response.message || 'API Key 保存失败');
-    }
-  };
-
-  const handleDeleteApiKey = async (keyId: string) => {
-    if (!confirm('确定要删除这个 API Key 吗？')) return;
-
-    const response = await userApi.deleteApiKey(keyId);
-    if (response.ok) {
-      showMessage('success', 'API Key 已删除');
-      void loadOwnApiKeys();
-    } else {
-      showMessage('error', response.message || '删除失败');
-    }
-  };
-
-  const handleAddTemplate = () => {
-    setEditingTemplateId(null);
-    setTemplateName('');
-    setTemplateContent('');
-    setTemplateModalMode('add');
-  };
-
-  const handleEditTemplate = (template: PromptTemplateRecord) => {
-    setEditingTemplateId(template.id);
-    setTemplateName(template.name);
-    setTemplateContent(template.content);
-    setTemplateModalMode('edit');
-  };
-
-  const closeTemplateModal = () => {
-    setTemplateModalMode(null);
-    setEditingTemplateId(null);
-    setTemplateName('');
-    setTemplateContent('');
-  };
-
-  const handleSaveTemplate = async () => {
-    if (!templateName.trim() || !templateContent.trim()) {
-      showMessage('error', '模板名称和内容不能为空');
-      return;
-    }
-
-    if (editingTemplateId) {
-      const response = await userApi.updatePromptTemplate(editingTemplateId, {
-        name: templateName.trim(),
-        content: templateContent.trim(),
-      });
-      if (response.ok) {
-        showMessage('success', '提示词模板已更新');
-        closeTemplateModal();
-        void loadOwnPromptTemplates();
+      if (keysRes.ok && Array.isArray(keysRes.data)) {
+        setLicenseKeys(keysRes.data as LicenseKeyRecord[]);
       } else {
-        showMessage('error', response.message || '模板更新失败');
+        setLicenseKeys([]);
       }
+      return true;
+    } catch (error) {
+      showMessage('error', error instanceof Error ? error.message : '数据加载失败');
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const ok = await loadData();
+      if (ok) {
+        showMessage('success', '数据已刷新');
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleGenerateLicenseKeys = async () => {
+    if (generateQuantity < 1) {
+      showMessage('error', '生成数量至少为 1');
       return;
     }
 
-    const response = await userApi.createPromptTemplate({
-      name: templateName.trim(),
-      content: templateContent.trim(),
+    const duration = licenseDurationDays.trim() ? Number(licenseDurationDays.trim()) : undefined;
+    if (typeof duration === 'number' && (!Number.isFinite(duration) || duration <= 0)) {
+      showMessage('error', '有效天数必须是正整数');
+      return;
+    }
+
+    const response = await adminApi.generateLicenseKeys({
+      quantity: generateQuantity,
+      name_prefix: licenseNamePrefix.trim() || undefined,
+      duration_days: duration,
+      note: licenseNote.trim() || undefined,
+      is_admin: generateAdminKeys,
     });
+
+    if (!response.ok || !response.data) {
+      showMessage('error', response.message || '卡密生成失败');
+      return;
+    }
+
+    setLicenseNamePrefix('');
+    setLicenseNote('');
+    setGenerateAdminKeys(false);
+    showMessage('success', `已生成 ${(response.data.items || []).length} 张卡密`);
+    void loadData();
+  };
+
+  const handleToggleLicenseKeyStatus = async (item: LicenseKeyRecord) => {
+    const nextStatus = item.status === 'active' ? 'disabled' : 'active';
+    if (!confirm(`确定要将卡密 ${item.card_key} ${nextStatus === 'active' ? '启用' : '停用'}吗？`)) return;
+
+    const response = await adminApi.updateLicenseKey(item.id, { status: nextStatus });
     if (response.ok) {
-      showMessage('success', '提示词模板已创建');
-      closeTemplateModal();
-      void loadOwnPromptTemplates();
-    } else {
-      showMessage('error', response.message || '模板创建失败');
+      showMessage('success', `卡密已${nextStatus === 'active' ? '启用' : '停用'}`);
+      void loadData();
+      return;
+    }
+
+    showMessage('error', response.message || '卡密更新失败');
+  };
+
+  const handleDeleteLicenseKey = async (item: LicenseKeyRecord) => {
+    if (!confirm(`确定要删除卡密 ${item.card_key} 吗？删除后不可恢复。`)) return;
+
+    const response = await adminApi.deleteLicenseKey(item.id);
+    if (response.ok) {
+      showMessage('success', '卡密已删除');
+      void loadData();
+      return;
+    }
+
+    showMessage('error', response.message || '删除失败');
+  };
+
+  const handleCopyLicenseKey = async (cardKey: string) => {
+    try {
+      if (navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(cardKey);
+      } else if (!fallbackCopyText(cardKey)) {
+        throw new Error('copy_failed');
+      }
+      showMessage('success', `已复制卡密 ${cardKey}`);
+    } catch {
+      showMessage('error', '复制失败，请手动复制');
     }
   };
 
-  const handleDeleteTemplate = async (templateId: string) => {
-    if (!confirm('确定要删除这个提示词模板吗？')) return;
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredLicenseKeys = licenseKeys.filter((item) => {
+    if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+    if (!normalizedSearch) return true;
 
-    const response = await userApi.deletePromptTemplate(templateId);
-    if (response.ok) {
-      showMessage('success', '提示词模板已删除');
-      void loadOwnPromptTemplates();
-    } else {
-      showMessage('error', response.message || '删除失败');
-    }
-  };
-
-  const filteredUsers = users.filter(
-    (item) =>
-      item.email.toLowerCase().includes(search.toLowerCase())
-      || (item.username && item.username.toLowerCase().includes(search.toLowerCase()))
-  );
+    return [
+      item.card_key,
+      item.name,
+      item.note,
+      item.bound_user_display_name,
+      item.masked_card_key,
+    ]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(normalizedSearch));
+  });
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="h-screen overflow-y-auto bg-app-bg">
+      <div className="max-w-7xl mx-auto space-y-6 px-4 py-6 md:px-6 md:py-8">
       <div className="bg-white rounded-xl shadow-sm p-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">用户与权限管理</h1>
-            <p className="text-gray-500 mt-1">{user?.email}</p>
-            <p className="text-sm text-gray-400 mt-2">当前页面同时管理用户权限、当前管理员账号的 API Key 与提示词模板。</p>
+            <h1 className="text-2xl font-bold text-gray-900">卡密管理后台</h1>
+            <p className="text-gray-500 mt-1">{adminLabel}</p>
+            <p className="text-sm text-gray-400 mt-2">网页端只保留卡密发放、停用和回收，不再进入业务工作台。</p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="px-3 py-1 bg-purple-100 text-purple-700 text-sm font-medium rounded">
-              管理员
-            </span>
-            <Link
-              to="/"
-              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+            <span className="px-3 py-1 bg-purple-100 text-purple-700 text-sm font-medium rounded">管理员</span>
+            <button
+              type="button"
+              onClick={() => { void handleRefresh(); }}
+              disabled={isRefreshing}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              返回工作台
-            </Link>
+              {isRefreshing ? '刷新中...' : '刷新数据'}
+            </button>
             <button
               type="button"
               onClick={logout}
@@ -328,264 +241,196 @@ export default function AdminDashboard() {
       )}
 
       {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
           <div className="bg-white rounded-xl shadow-sm p-5">
-            <div className="text-gray-500 text-sm">总用户数</div>
-            <div className="text-2xl font-bold text-gray-900 mt-1">{stats.total_users}</div>
+            <div className="text-sm text-gray-500">总卡密数</div>
+            <div className="text-2xl font-bold text-gray-900 mt-1">{stats.total_license_keys}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-5">
-            <div className="text-gray-500 text-sm">活跃用户</div>
-            <div className="text-2xl font-bold text-green-600 mt-1">{stats.active_users}</div>
+            <div className="text-sm text-gray-500">可用卡密</div>
+            <div className="text-2xl font-bold text-emerald-600 mt-1">{stats.active_license_keys}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-5">
-            <div className="text-gray-500 text-sm">管理员</div>
-            <div className="text-2xl font-bold text-purple-600 mt-1">{stats.admin_users}</div>
+            <div className="text-sm text-gray-500">已激活卡密</div>
+            <div className="text-2xl font-bold text-indigo-600 mt-1">{stats.used_license_keys}</div>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-5">
-            <div className="text-gray-500 text-sm">今日新增</div>
-            <div className="text-2xl font-bold text-blue-600 mt-1">{stats.new_users_today}</div>
+            <div className="text-sm text-gray-500">已停用</div>
+            <div className="text-2xl font-bold text-rose-600 mt-1">{stats.disabled_license_keys}</div>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm p-5">
+            <div className="text-sm text-gray-500">已过期</div>
+            <div className="text-2xl font-bold text-amber-600 mt-1">{stats.expired_license_keys}</div>
           </div>
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-          <h2 className="text-xl font-semibold text-gray-900">用户账号与权限</h2>
-          <div className="flex flex-col md:flex-row gap-3">
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索邮箱或用户名..."
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-            />
-            <select
-              value={statusFilter === null ? 'all' : statusFilter ? 'active' : 'inactive'}
-              onChange={(e) => setStatusFilter(e.target.value === 'all' ? null : e.target.value === 'active')}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+      <div className="grid grid-cols-1 xl:grid-cols-[360px,1fr] gap-6">
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-xl font-semibold text-gray-900">生成新卡密</h2>
+          <p className="text-sm text-gray-500 mt-1">生成后可直接复制给用户，用户在桌面客户端登录并自行填写 AI API Key。</p>
+
+          <div className="space-y-4 mt-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">生成数量</label>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={generateQuantity}
+                onChange={(event) => setGenerateQuantity(Number(event.target.value) || 1)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">名称前缀</label>
+              <input
+                type="text"
+                value={licenseNamePrefix}
+                onChange={(event) => setLicenseNamePrefix(event.target.value)}
+                placeholder="例如：3月代理批次"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">有效天数</label>
+              <input
+                type="number"
+                min={1}
+                value={licenseDurationDays}
+                onChange={(event) => setLicenseDurationDays(event.target.value)}
+                placeholder="留空表示永久有效"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+              <textarea
+                rows={4}
+                value={licenseNote}
+                onChange={(event) => setLicenseNote(event.target.value)}
+                placeholder="例如：给渠道商 A 的 30 天体验卡"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
+              />
+            </div>
+
+            <label className="flex items-start gap-3 rounded-xl border border-gray-200 px-4 py-3">
+              <input
+                type="checkbox"
+                checked={generateAdminKeys}
+                onChange={(event) => setGenerateAdminKeys(event.target.checked)}
+                className="mt-1"
+              />
+              <div>
+                <div className="text-sm font-medium text-gray-800">生成管理员卡密</div>
+                <div className="text-xs text-gray-500 mt-1">管理员卡密登录网页后只会进入当前卡密后台。</div>
+              </div>
+            </label>
+
+            <button
+              type="button"
+              onClick={() => { void handleGenerateLicenseKeys(); }}
+              className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-medium"
             >
-              <option value="all">全部用户</option>
-              <option value="active">活跃用户</option>
-              <option value="inactive">已禁用</option>
-            </select>
+              生成卡密
+            </button>
           </div>
         </div>
 
-        {isUserLoading ? (
-          <div className="text-center py-8 text-gray-500">加载中...</div>
-        ) : filteredUsers.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">没有找到用户</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">邮箱</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">用户名</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">状态</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">注册时间</th>
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredUsers.map((item) => (
-                  <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-gray-900">{item.email}</div>
-                      {item.id === user?.id && (
-                        <span className="text-xs text-gray-400">(当前用户)</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">{item.username || '-'}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex gap-1">
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">卡密列表</h2>
+              <p className="text-sm text-gray-500 mt-1">可查看卡密状态、绑定用户和最近使用时间。</p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="搜索卡密、名称、备注、绑定用户"
+                className="w-full sm:w-72 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              />
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+              >
+                <option value="all">全部状态</option>
+                <option value="active">仅可用</option>
+                <option value="disabled">仅停用</option>
+              </select>
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="py-12 text-center text-gray-500">加载中...</div>
+          ) : filteredLicenseKeys.length === 0 ? (
+            <div className="py-12 text-center text-gray-500">当前没有符合条件的卡密</div>
+          ) : (
+            <div className="space-y-4">
+              {filteredLicenseKeys.map((item) => (
+                <div key={item.id} className="rounded-2xl border border-gray-200 p-5 hover:border-gray-300 transition">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-base font-semibold text-gray-900 break-all">{item.card_key}</span>
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                          item.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                        }`}>
+                          {item.status === 'active' ? '可用' : '已停用'}
+                        </span>
                         {item.is_admin && (
-                          <span className="px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded">
+                          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
                             管理员
                           </span>
                         )}
-                        {item.is_active ? (
-                          <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">
-                            活跃
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 rounded">
-                            已禁用
-                          </span>
-                        )}
                       </div>
-                    </td>
-                    <td className="py-3 px-4 text-gray-600 text-sm">
-                      {new Date(item.created_at).toLocaleDateString('zh-CN')}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex justify-end gap-2">
-                        {item.id !== user?.id && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => { void handleToggleStatus(item.id, item.is_active); }}
-                              className={`px-2 py-1 text-xs rounded ${
-                                item.is_active
-                                  ? 'text-orange-600 hover:bg-orange-50'
-                                  : 'text-green-600 hover:bg-green-50'
-                              }`}
-                            >
-                              {item.is_active ? '禁用' : '启用'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { void handleToggleAdmin(item.id, item.is_admin); }}
-                              className="px-2 py-1 text-xs text-purple-600 hover:bg-purple-50 rounded"
-                            >
-                              {item.is_admin ? '取消管理员' : '设为管理员'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { void handleDeleteUser(item.id, item.email); }}
-                              className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
-                            >
-                              删除
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">我的 API Key 管理</h2>
-              <p className="text-sm text-gray-500 mt-1">当前管理员账号的模型与视频接口配置。</p>
-            </div>
-            <button
-              type="button"
-              onClick={handleAddApiKey}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-            >
-              添加 API Key
-            </button>
-          </div>
+                      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-600">
+                        <div>名称：{item.name || '-'}</div>
+                        <div>绑定用户：{item.bound_user_display_name || '-'}</div>
+                        <div>创建时间：{formatDateTime(item.created_at)}</div>
+                        <div>激活时间：{formatDateTime(item.activated_at)}</div>
+                        <div>最近使用：{formatDateTime(item.last_used_at)}</div>
+                        <div>到期时间：{formatDateTime(item.expires_at)}</div>
+                          <div>登录次数：{item.activation_count}</div>
+                        <div>有效天数：{item.duration_days ?? '永久'}</div>
+                      </div>
 
-          {isApiKeysLoading ? (
-            <div className="text-center py-8 text-gray-500">加载中...</div>
-          ) : apiKeys.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="mb-4">还没有配置 API Key</p>
-              <button
-                type="button"
-                onClick={handleAddApiKey}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-              >
-                立即添加
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {apiKeys.map((item) => (
-                <div key={item.id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`px-2 py-1 text-xs font-medium rounded ${providerColors[item.provider] || 'bg-gray-100 text-gray-700'}`}>
-                          {getProviderDisplayName(item.provider)}
-                        </span>
-                        {item.is_active && (
-                          <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-700 rounded">
-                            启用中
-                          </span>
-                        )}
-                      </div>
-                      <div className="font-mono text-sm text-gray-600 mb-1">
-                        {item.api_key.substring(0, 8)}***{item.api_key.substring(item.api_key.length - 4)}
-                      </div>
-                      {item.model_name && (
-                        <div className="text-sm text-gray-500">模型: {item.model_name}</div>
-                      )}
-                      {item.api_endpoint && (
-                        <div className="text-sm text-gray-500 truncate">{item.api_endpoint}</div>
+                      {item.note && (
+                        <div className="mt-3 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600 leading-6">
+                          {item.note}
+                        </div>
                       )}
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleEditApiKey(item)}
-                        className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { void handleDeleteApiKey(item.id); }}
-                        className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
 
-        <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">我的提示词模板管理</h2>
-              <p className="text-sm text-gray-500 mt-1">当前管理员账号登录后可直接复用这些模板。</p>
-            </div>
-            <button
-              type="button"
-              onClick={handleAddTemplate}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-            >
-              新建模板
-            </button>
-          </div>
-
-          {isTemplatesLoading ? (
-            <div className="text-center py-8 text-gray-500">加载中...</div>
-          ) : templates.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="mb-4">还没有提示词模板</p>
-              <button
-                type="button"
-                onClick={handleAddTemplate}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-              >
-                立即创建
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {templates.map((item) => (
-                <div key={item.id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-gray-900 mb-1">{item.name}</h3>
-                      <p className="text-sm text-gray-500 whitespace-pre-wrap line-clamp-3">{item.content}</p>
-                    </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2 xl:ml-6">
                       <button
                         type="button"
-                        onClick={() => handleEditTemplate(item)}
-                        className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
+                        onClick={() => { void handleCopyLicenseKey(item.card_key); }}
+                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
                       >
-                        编辑
+                        复制卡密
                       </button>
                       <button
                         type="button"
-                        onClick={() => { void handleDeleteTemplate(item.id); }}
-                        className="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
+                        onClick={() => { void handleToggleLicenseKeyStatus(item); }}
+                        className={`px-4 py-2 rounded-lg transition ${
+                          item.status === 'active'
+                            ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
+                            : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                        }`}
+                      >
+                        {item.status === 'active' ? '停用' : '启用'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { void handleDeleteLicenseKey(item); }}
+                        className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-black transition"
                       >
                         删除
                       </button>
@@ -597,132 +442,7 @@ export default function AdminDashboard() {
           )}
         </div>
       </div>
-
-      {apiKeyModalMode && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">
-              {apiKeyModalMode === 'add' ? '添加 API Key' : '编辑 API Key'}
-            </h3>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">API 提供商</label>
-                <select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                >
-                    {[...TEXT_PROVIDER_PRESETS, ...VIDEO_PROVIDER_PRESETS].map((item) => (
-                      <option key={item.id} value={item.id}>{item.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-                <input
-                  type="password"
-                  value={apiKeyValue}
-                  onChange={(e) => setApiKeyValue(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  placeholder="输入您的 API Key"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">API 端点（可选）</label>
-                <input
-                  type="text"
-                  value={apiEndpoint}
-                  onChange={(e) => setApiEndpoint(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  placeholder="自定义 API 端点"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">模型名称（可选）</label>
-                <input
-                  type="text"
-                  value={modelName}
-                  onChange={(e) => setModelName(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  placeholder="例如: ep-20250225204603-zcqr4"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                type="button"
-                onClick={closeApiKeyModal}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleSaveApiKey(); }}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-              >
-                保存
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {templateModalMode && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">
-              {templateModalMode === 'add' ? '新建提示词模板' : '编辑提示词模板'}
-            </h3>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">模板名称</label>
-                <input
-                  type="text"
-                  value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  placeholder="例如：高客单痛点转化模板"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">模板内容</label>
-                <textarea
-                  value={templateContent}
-                  onChange={(e) => setTemplateContent(e.target.value)}
-                  rows={10}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none"
-                  placeholder="输入提示词模板内容..."
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                type="button"
-                onClick={closeTemplateModal}
-                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={() => { void handleSaveTemplate(); }}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-              >
-                保存
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
